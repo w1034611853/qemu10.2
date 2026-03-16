@@ -38,6 +38,14 @@ endif
 ifneq ($(CROSS_CC_HAS_ARMV8_5),)
 AARCH64_TESTS += dcpodp
 dcpodp: CFLAGS += $(CROSS_CC_HAS_ARMV8_5)
+
+AARCH64_TESTS += nzcv-status4
+nzcv-status4: CFLAGS += $(CROSS_CC_HAS_ARMV8_5)
+nzcv-status4: LDFLAGS += -nostdlib
+run-nzcv-status4: QEMU_OPTS += -cpu max
+run-nzcv-status4: nzcv-status4
+	$(call run-test,$<,$(QEMU) $(QEMU_OPTS) $<)
+	$(call diff-out,$<,$(AARCH64_SRC)/nzcv-status4.out)
 endif
 
 # Pauth Tests

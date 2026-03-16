@@ -256,6 +256,20 @@ typedef enum ARMFPStatusFlavour {
 } ARMFPStatusFlavour;
 #define FPST_COUNT  10
 
+typedef enum A64X86CCOp {
+    A64_X86_CC_INVALID = 0,
+    A64_X86_CC_SUB32,
+    A64_X86_CC_SUB64,
+    A64_X86_CC_ADD32,
+    A64_X86_CC_ADD64,
+    A64_X86_CC_LOGIC32,
+    A64_X86_CC_LOGIC64,
+    A64_X86_CC_ADC32,
+    A64_X86_CC_ADC64,
+    A64_X86_CC_SBC32,
+    A64_X86_CC_SBC64,
+} A64X86CCOp;
+
 typedef struct CPUArchState {
     /* Regs for current mode.  */
     uint32_t regs[16];
@@ -307,6 +321,13 @@ typedef struct CPUArchState {
     uint32_t VF; /* V is the bit 31. All other bits are undefined */
     uint32_t NF; /* N is bit 31. All other bits are undefined.  */
     uint32_t ZF; /* Z set if zero.  */
+    /*
+     * Canonicalized A64 flags cache for the x86 compare fast path.
+     * x86_status4 packs SF/ZF/CF/OF into bits [3:0].
+     */
+    uint32_t x86_status4;
+    uint32_t x86_cc_op;
+    uint32_t x86_flags_valid;
     uint32_t QF; /* 0 or 1 */
     uint32_t GE; /* cpsr[19:16] */
     uint32_t condexec_bits; /* IT bits.  cpsr[15:10,26:25].  */
@@ -1567,6 +1588,9 @@ static inline void pstate_write(CPUARMState *env, uint64_t val)
     env->NF = val;
     env->CF = (val >> 29) & 1;
     env->VF = (val << 3) & 0x80000000;
+    env->x86_status4 = 0;
+    env->x86_cc_op = A64_X86_CC_INVALID;
+    env->x86_flags_valid = 0;
     env->daif = val & PSTATE_DAIF;
     env->btype = (val >> 10) & 3;
     env->pstate = val & ~CACHED_PSTATE_BITS;
@@ -1613,6 +1637,9 @@ static inline void xpsr_write(CPUARMState *env, uint32_t val, uint32_t mask)
         env->NF = val;
         env->CF = (val >> 29) & 1;
         env->VF = (val << 3) & 0x80000000;
+        env->x86_status4 = 0;
+        env->x86_cc_op = A64_X86_CC_INVALID;
+        env->x86_flags_valid = 0;
     }
     if (mask & XPSR_Q) {
         env->QF = ((val & XPSR_Q) != 0);

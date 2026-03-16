@@ -201,6 +201,12 @@ typedef struct DisasContext {
     bool insn_start_updated;
     /* Offset from VNCR_EL2 when FEAT_NV2 redirects this reg to memory */
     uint32_t nv2_redirect_offset;
+    /* A64-only pending compare metadata for CMP/SUBS -> B.cond fast path. */
+    bool a64_cmp_pending_valid;
+    bool a64_cmp_pending_keep;
+    bool a64_cmp_pending_sf;
+    TCGv_i64 a64_cmp_pending_lhs;
+    TCGv_i64 a64_cmp_pending_rhs;
 } DisasContext;
 
 typedef struct DisasCompare {
@@ -210,6 +216,7 @@ typedef struct DisasCompare {
 
 /* Share the TCG temporaries common between 32 and 64 bit modes.  */
 extern TCGv_i32 cpu_NF, cpu_ZF, cpu_CF, cpu_VF;
+extern TCGv_i32 cpu_x86_status4, cpu_x86_cc_op, cpu_x86_flags_valid;
 extern TCGv_i64 cpu_exclusive_addr;
 extern TCGv_i64 cpu_exclusive_val;
 
