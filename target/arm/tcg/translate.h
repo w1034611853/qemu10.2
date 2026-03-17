@@ -209,7 +209,16 @@ typedef struct DisasContext {
     TCGv_i64 a64_cmp_pending_rhs;
     TCGOp *a64_cmp_pending_rewind;
     TCGOp *a64_cmp_pending_end;
+    target_ulong a64_cmp_pending_pc;
+    uint32_t a64_cmp_pending_age;
+    bool a64_cmp_pending_consumed;
+    const char *a64_cmp_pending_consumer;
     uint32_t a64_cmp_pending_cc_op;
+    uint32_t a64_cmp_stat_records;
+    uint32_t a64_cmp_stat_consumes;
+    uint32_t a64_cmp_stat_rewinds;
+    uint32_t a64_cmp_stat_drops;
+    uint32_t a64_cmp_stat_overwrites;
 } DisasContext;
 
 typedef struct DisasCompare {

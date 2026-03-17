@@ -493,6 +493,7 @@ t36_after:
     cmp     x0, #9
     csel    x2, x3, x4, eq
     expect_reg_imm x2, 77, 0x37
+    expect_nzcv 0x6, 0x37
 
     /* 0x38: Adjacent CMP -> FCSEL */
     fmov    d2, #4.0
@@ -500,6 +501,7 @@ t36_after:
     mov     x0, #9
     cmp     x0, #9
     fcsel   d4, d2, d3, eq
+    expect_nzcv 0x6, 0x38
     fmov    x5, d4
     ldr     x6, =0x4010000000000000
     mov     x20, #0x38
@@ -864,6 +866,74 @@ t53_target:
     b.eq    1f
     b       fail
 1:
+
+    /* 0x5b: adjacent CMP + B.mi (64-bit) */
+    mov     x0, #0
+    cmp     x0, #1
+    b.mi    t5b_ok
+    mov     x20, #0x5b
+    b       fail
+t5b_ok:
+
+    /* 0x5c: adjacent CMP + B.pl (64-bit) */
+    mov     x0, #2
+    cmp     x0, #1
+    b.pl    t5c_ok
+    mov     x20, #0x5c
+    b       fail
+t5c_ok:
+
+    /* 0x5d: adjacent CMP + B.vs (64-bit) */
+    mov     x0, #1
+    lsl     x0, x0, #63
+    mov     x1, #1
+    cmp     x0, x1
+    b.vs    t5d_ok
+    mov     x20, #0x5d
+    b       fail
+t5d_ok:
+
+    /* 0x5e: adjacent CMP + B.vc (64-bit) */
+    mov     x0, #5
+    cmp     x0, #1
+    b.vc    t5e_ok
+    mov     x20, #0x5e
+    b       fail
+t5e_ok:
+
+    /* 0x5f: adjacent CMP + B.mi (32-bit) */
+    mov     w0, #0
+    cmp     w0, #1
+    b.mi    t5f_ok
+    mov     x20, #0x5f
+    b       fail
+t5f_ok:
+
+    /* 0x60: adjacent CMP + B.pl (32-bit) */
+    mov     w0, #2
+    cmp     w0, #1
+    b.pl    t60_ok
+    mov     x20, #0x60
+    b       fail
+t60_ok:
+
+    /* 0x61: adjacent CMP + B.vs (32-bit) */
+    mov     w0, #1
+    lsl     w0, w0, #31
+    mov     w1, #1
+    cmp     w0, w1
+    b.vs    t61_ok
+    mov     x20, #0x61
+    b       fail
+t61_ok:
+
+    /* 0x62: adjacent CMP + B.vc (32-bit) */
+    mov     w0, #5
+    cmp     w0, #1
+    b.vc    t62_ok
+    mov     x20, #0x62
+    b       fail
+t62_ok:
 
     b       after_shared_consumers
 

@@ -470,6 +470,130 @@ typedef struct DisasCompare64 {
     TCGv_i64 value;
 } DisasCompare64;
 
+static bool a64_cmp_trace_enabled(void)
+{
+    return unlikely(qemu_loglevel_mask(CPU_LOG_TB_OP));
+}
+
+static void a64_cmp_note_record(DisasContext *s, bool sf, uint32_t cc_op)
+{
+    s->a64_cmp_stat_records++;
+    if (a64_cmp_trace_enabled()) {
+        qemu_log_mask(CPU_LOG_TB_OP,
+                      "A64 cmp-pending record pc=0x%" PRIx64
+                      " sf=%d cc_op=%u\n",
+                      (uint64_t)s->pc_curr, sf, cc_op);
+    }
+}
+
+static void a64_cmp_note_overwrite(DisasContext *s)
+{
+    if (!s->a64_cmp_pending_valid) {
+        return;
+    }
+
+    s->a64_cmp_stat_overwrites++;
+    if (a64_cmp_trace_enabled()) {
+        qemu_log_mask(CPU_LOG_TB_OP,
+                      "A64 cmp-pending overwrite old_pc=0x%" PRIx64
+                      " old_age=%u new_pc=0x%" PRIx64 "\n",
+                      (uint64_t)s->a64_cmp_pending_pc,
+                      s->a64_cmp_pending_age,
+                      (uint64_t)s->pc_curr);
+    }
+}
+
+static void a64_cmp_note_consume(DisasContext *s, const char *consumer)
+{
+    if (!s->a64_cmp_pending_valid || s->a64_cmp_pending_consumed) {
+        return;
+    }
+
+    s->a64_cmp_pending_consumed = true;
+    s->a64_cmp_pending_consumer = consumer;
+    s->a64_cmp_stat_consumes++;
+    if (a64_cmp_trace_enabled()) {
+        qemu_log_mask(CPU_LOG_TB_OP,
+                      "A64 cmp-pending use producer_pc=0x%" PRIx64
+                      " consumer_pc=0x%" PRIx64
+                      " age=%u via=%s\n",
+                      (uint64_t)s->a64_cmp_pending_pc,
+                      (uint64_t)s->pc_curr,
+                      s->a64_cmp_pending_age,
+                      consumer);
+    }
+}
+
+static void a64_cmp_note_rewind(DisasContext *s, const char *consumer)
+{
+    s->a64_cmp_stat_rewinds++;
+    if (a64_cmp_trace_enabled()) {
+        qemu_log_mask(CPU_LOG_TB_OP,
+                      "A64 cmp-pending rewind producer_pc=0x%" PRIx64
+                      " consumer_pc=0x%" PRIx64
+                      " age=%u via=%s\n",
+                      (uint64_t)s->a64_cmp_pending_pc,
+                      (uint64_t)s->pc_curr,
+                      s->a64_cmp_pending_age,
+                      consumer);
+    }
+}
+
+static void a64_cmp_note_drop(DisasContext *s)
+{
+    if (!s->a64_cmp_pending_valid) {
+        return;
+    }
+
+    s->a64_cmp_stat_drops++;
+    if (!a64_cmp_trace_enabled()) {
+        return;
+    }
+
+    if (s->a64_cmp_pending_consumed) {
+        qemu_log_mask(CPU_LOG_TB_OP,
+                      "A64 cmp-pending retire producer_pc=0x%" PRIx64
+                      " consumer_pc=0x%" PRIx64
+                      " age=%u via=%s\n",
+                      (uint64_t)s->a64_cmp_pending_pc,
+                      (uint64_t)s->pc_curr,
+                      s->a64_cmp_pending_age,
+                      s->a64_cmp_pending_consumer);
+    } else {
+        qemu_log_mask(CPU_LOG_TB_OP,
+                      "A64 cmp-pending drop producer_pc=0x%" PRIx64
+                      " blocker_pc=0x%" PRIx64
+                      " age=%u insn=0x%08" PRIx32 "\n",
+                      (uint64_t)s->a64_cmp_pending_pc,
+                      (uint64_t)s->pc_curr,
+                      s->a64_cmp_pending_age,
+                      s->insn);
+    }
+}
+
+static void a64_cmp_log_tb_summary(DisasContext *s)
+{
+    if (!a64_cmp_trace_enabled()) {
+        return;
+    }
+
+    if (s->a64_cmp_stat_records == 0 && s->a64_cmp_stat_consumes == 0 &&
+        s->a64_cmp_stat_rewinds == 0 && s->a64_cmp_stat_drops == 0 &&
+        s->a64_cmp_stat_overwrites == 0) {
+        return;
+    }
+
+    qemu_log_mask(CPU_LOG_TB_OP,
+                  "A64 cmp-pending summary tb_pc=0x%" PRIx64
+                  " records=%u consumes=%u rewinds=%u drops=%u overwrites=%u\n",
+                  (uint64_t)s->base.pc_first,
+                  s->a64_cmp_stat_records,
+                  s->a64_cmp_stat_consumes,
+                  s->a64_cmp_stat_rewinds,
+                  s->a64_cmp_stat_drops,
+                  s->a64_cmp_stat_overwrites);
+}
+
 static inline void a64_invalidate_x86_flags(void)
 {
     tcg_gen_movi_i32(cpu_x86_flags_valid, 0);
@@ -481,6 +605,7 @@ static void a64_record_cmp_for_bcond(DisasContext *s, bool sf,
                                      TCGOp *rewind, TCGOp *end,
                                      uint32_t cc_op)
 {
+    a64_cmp_note_overwrite(s);
     s->a64_cmp_pending_valid = true;
     s->a64_cmp_pending_keep = true;
     s->a64_cmp_pending_sf = sf;
@@ -488,7 +613,12 @@ static void a64_record_cmp_for_bcond(DisasContext *s, bool sf,
     s->a64_cmp_pending_rhs = rhs;
     s->a64_cmp_pending_rewind = rewind;
     s->a64_cmp_pending_end = end;
+    s->a64_cmp_pending_pc = s->pc_curr;
+    s->a64_cmp_pending_age = 0;
+    s->a64_cmp_pending_consumed = false;
+    s->a64_cmp_pending_consumer = NULL;
     s->a64_cmp_pending_cc_op = cc_op;
+    a64_cmp_note_record(s, sf, cc_op);
 }
 
 static void a64_save_status4_sub(int sf)
@@ -671,6 +801,28 @@ static bool a64_cmp_cond_to_tcg(TCGCond *cond, int cc)
     }
 }
 
+#if defined(__i386__) || defined(__x86_64__)
+static bool a64_cmp_cond_to_x86_jcc(int *jcc, int cc)
+{
+    switch (cc) {
+    case 4: /* mi */
+        *jcc = 0x8; /* js */
+        return true;
+    case 5: /* pl */
+        *jcc = 0x9; /* jns */
+        return true;
+    case 6: /* vs */
+        *jcc = 0x0; /* jo */
+        return true;
+    case 7: /* vc */
+        *jcc = 0x1; /* jno */
+        return true;
+    default:
+        return false;
+    }
+}
+#endif
+
 static bool a64_try_set_cmp_cond_bool_i32(DisasContext *s, int cc, TCGv_i32 dst)
 {
     TCGCond cond;
@@ -678,6 +830,8 @@ static bool a64_try_set_cmp_cond_bool_i32(DisasContext *s, int cc, TCGv_i32 dst)
     if (!s->a64_cmp_pending_valid || !a64_cmp_cond_to_tcg(&cond, cc)) {
         return false;
     }
+
+    a64_cmp_note_consume(s, "cc-bool");
 
     if (s->a64_cmp_pending_sf) {
         TCGv_i64 tmp = tcg_temp_new_i64();
@@ -734,6 +888,8 @@ static bool a64_try_emit_cmp_bcond(DisasContext *s, int cc, TCGLabel *label)
         return false;
     }
 
+    a64_cmp_note_consume(s, "B.cond-generic");
+
     if (s->a64_cmp_pending_sf) {
         tcg_gen_brcond_i64(cond, s->a64_cmp_pending_lhs,
                            s->a64_cmp_pending_rhs, label);
@@ -748,9 +904,85 @@ static bool a64_try_emit_cmp_bcond(DisasContext *s, int cc, TCGLabel *label)
     return true;
 }
 
+static bool a64_cmp_pending_is_adjacent_to_curr_insn(DisasContext *s)
+{
+    TCGOp *last = tcg_last_op();
+
+    if (last == s->a64_cmp_pending_end) {
+        return true;
+    }
+
+    return last == s->base.insn_start &&
+        QTAILQ_PREV(last, link) == s->a64_cmp_pending_end;
+}
+
+static void a64_reemit_curr_insn_start(DisasContext *s)
+{
+    target_ulong pc_arg = s->pc_curr;
+
+    if (tb_cflags(s->base.tb) & CF_PCREL) {
+        pc_arg &= ~TARGET_PAGE_MASK;
+    }
+
+    tcg_gen_insn_start(pc_arg, 0, 0);
+    s->base.insn_start = tcg_last_op();
+    s->insn_start_updated = false;
+}
+
+static bool a64_try_rewind_adjacent_cmp(DisasContext *s, const char *consumer)
+{
+    bool need_reemit_insn_start;
+
+    if (!s->a64_cmp_pending_valid || !s->a64_cmp_pending_rewind ||
+        !a64_cmp_pending_is_adjacent_to_curr_insn(s)) {
+        return false;
+    }
+
+    need_reemit_insn_start = (tcg_last_op() == s->base.insn_start);
+    tcg_remove_ops_after(s->a64_cmp_pending_rewind);
+    if (need_reemit_insn_start) {
+        a64_reemit_curr_insn_start(s);
+    }
+    a64_cmp_note_rewind(s, consumer);
+    return true;
+}
+
 static void gen_goto_tb(DisasContext *s, unsigned tb_slot_idx, int64_t diff);
 
 #if defined(__i386__) || defined(__x86_64__)
+static bool a64_cmp_cond_is_unsigned(TCGCond cond)
+{
+    switch (cond) {
+    case TCG_COND_GEU:
+    case TCG_COND_LTU:
+    case TCG_COND_GTU:
+    case TCG_COND_LEU:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static void a64_get_cmp_movcond_i64(DisasContext *s, TCGCond cond,
+                                    TCGv_i64 *lhs, TCGv_i64 *rhs)
+{
+    if (s->a64_cmp_pending_sf) {
+        *lhs = s->a64_cmp_pending_lhs;
+        *rhs = s->a64_cmp_pending_rhs;
+        return;
+    }
+
+    *lhs = tcg_temp_new_i64();
+    *rhs = tcg_temp_new_i64();
+    if (a64_cmp_cond_is_unsigned(cond)) {
+        tcg_gen_ext32u_i64(*lhs, s->a64_cmp_pending_lhs);
+        tcg_gen_ext32u_i64(*rhs, s->a64_cmp_pending_rhs);
+    } else {
+        tcg_gen_ext32s_i64(*lhs, s->a64_cmp_pending_lhs);
+        tcg_gen_ext32s_i64(*rhs, s->a64_cmp_pending_rhs);
+    }
+}
+
 static void a64_add_label_use(TCGLabel *label, TCGOp *op)
 {
     TCGLabelUse *u = tcg_malloc(sizeof(*u));
@@ -781,6 +1013,19 @@ static void a64_emit_x86_cmp_brcond_i64(TCGCond cond, TCGv_i64 lhs,
     a64_add_label_use(label, op);
 }
 
+static void a64_emit_x86_cmp_jcc_i64(int jcc, TCGv_i64 lhs,
+                                     TCGv_i64 rhs, TCGLabel *label)
+{
+    TCGOp *op = tcg_emit_op(INDEX_op_x86_cmp_jcc, 4);
+
+    TCGOP_TYPE(op) = TCG_TYPE_I64;
+    tcg_set_insn_param(op, 0, tcgv_i64_arg(lhs));
+    tcg_set_insn_param(op, 1, tcgv_i64_arg(rhs));
+    tcg_set_insn_param(op, 2, jcc);
+    tcg_set_insn_param(op, 3, label_arg(label));
+    a64_add_label_use(label, op);
+}
+
 static void a64_emit_x86_cmp_brcond_i32(TCGCond cond, TCGv_i32 lhs,
                                         TCGv_i32 rhs, TCGLabel *label)
 {
@@ -799,6 +1044,19 @@ static void a64_emit_x86_cmp_brcond_i32(TCGCond cond, TCGv_i32 lhs,
     tcg_set_insn_param(op, 0, tcgv_i32_arg(lhs));
     tcg_set_insn_param(op, 1, tcgv_i32_arg(rhs));
     tcg_set_insn_param(op, 2, cond);
+    tcg_set_insn_param(op, 3, label_arg(label));
+    a64_add_label_use(label, op);
+}
+
+static void a64_emit_x86_cmp_jcc_i32(int jcc, TCGv_i32 lhs,
+                                     TCGv_i32 rhs, TCGLabel *label)
+{
+    TCGOp *op = tcg_emit_op(INDEX_op_x86_cmp_jcc, 4);
+
+    TCGOP_TYPE(op) = TCG_TYPE_I32;
+    tcg_set_insn_param(op, 0, tcgv_i32_arg(lhs));
+    tcg_set_insn_param(op, 1, tcgv_i32_arg(rhs));
+    tcg_set_insn_param(op, 2, jcc);
     tcg_set_insn_param(op, 3, label_arg(label));
     a64_add_label_use(label, op);
 }
@@ -824,26 +1082,41 @@ static bool a64_try_emit_x86_cmp_bcond(DisasContext *s, int cc,
                                        DisasLabel match, int imm)
 {
     TCGCond cond;
+    int jcc;
+    bool use_tcg_cond = a64_cmp_cond_to_tcg(&cond, cc);
+    bool use_x86_jcc = a64_cmp_cond_to_x86_jcc(&jcc, cc);
 
     if (!s->a64_cmp_pending_valid || !s->a64_cmp_pending_rewind ||
-        s->a64_cmp_pending_end != tcg_last_op() ||
-        !a64_cmp_cond_to_tcg(&cond, cc)) {
+        !a64_cmp_pending_is_adjacent_to_curr_insn(s) ||
+        (!use_tcg_cond && !use_x86_jcc)) {
         return false;
     }
 
-    tcg_remove_ops_after(s->a64_cmp_pending_rewind);
+    a64_try_rewind_adjacent_cmp(s, use_tcg_cond ? "B.cond-x86-tcg"
+                                                : "B.cond-x86-jcc");
     reset_btype(s);
+    a64_cmp_note_consume(s, use_tcg_cond ? "B.cond-x86-tcg"
+                                         : "B.cond-x86-jcc");
 
     if (s->a64_cmp_pending_sf) {
-        a64_emit_x86_cmp_brcond_i64(cond, s->a64_cmp_pending_lhs,
-                                    s->a64_cmp_pending_rhs, match.label);
+        if (use_tcg_cond) {
+            a64_emit_x86_cmp_brcond_i64(cond, s->a64_cmp_pending_lhs,
+                                        s->a64_cmp_pending_rhs, match.label);
+        } else {
+            a64_emit_x86_cmp_jcc_i64(jcc, s->a64_cmp_pending_lhs,
+                                     s->a64_cmp_pending_rhs, match.label);
+        }
     } else {
         TCGv_i32 lhs = tcg_temp_new_i32();
         TCGv_i32 rhs = tcg_temp_new_i32();
 
         tcg_gen_extrl_i64_i32(lhs, s->a64_cmp_pending_lhs);
         tcg_gen_extrl_i64_i32(rhs, s->a64_cmp_pending_rhs);
-        a64_emit_x86_cmp_brcond_i32(cond, lhs, rhs, match.label);
+        if (use_tcg_cond) {
+            a64_emit_x86_cmp_brcond_i32(cond, lhs, rhs, match.label);
+        } else {
+            a64_emit_x86_cmp_jcc_i32(jcc, lhs, rhs, match.label);
+        }
     }
 
     a64_emit_x86_save_cmp_flags(s->a64_cmp_pending_cc_op);
@@ -7977,6 +8250,27 @@ static bool trans_FCSEL(DisasContext *s, arg_FCSEL *a)
         return check == 0;
     }
 
+#if defined(__i386__) || defined(__x86_64__)
+    {
+        TCGCond cond;
+        TCGv_i64 lhs, rhs;
+
+        if (s->a64_cmp_pending_valid && a64_cmp_cond_to_tcg(&cond, a->cond) &&
+            a64_try_rewind_adjacent_cmp(s, "FCSEL-x86-direct")) {
+            t_true = tcg_temp_new_i64();
+            t_false = tcg_temp_new_i64();
+            read_vec_element(s, t_true, a->rn, 0, a->esz);
+            read_vec_element(s, t_false, a->rm, 0, a->esz);
+            a64_get_cmp_movcond_i64(s, cond, &lhs, &rhs);
+            a64_cmp_note_consume(s, "FCSEL-x86-direct");
+            tcg_gen_movcond_i64(cond, t_true, lhs, rhs, t_true, t_false);
+            a64_emit_x86_save_cmp_flags(s->a64_cmp_pending_cc_op);
+            write_fp_dreg(s, a->rd, t_true);
+            return true;
+        }
+    }
+#endif
+
     /* Zero extend sreg & hreg inputs to 64 bits now.  */
     t_true = tcg_temp_new_i64();
     t_false = tcg_temp_new_i64();
@@ -8322,9 +8616,15 @@ static bool trans_FCCMP(DisasContext *s, arg_FCCMP *a)
 {
     TCGLabel *label_continue = NULL;
     int check = fp_access_check_scalar_hsd(s, a->esz);
+    TCGCond adj_cond;
 
     if (check <= 0) {
         return check == 0;
+    }
+
+    if (a->cond >= 0x0e || a64_cmp_cond_to_tcg(&adj_cond, a->cond)) {
+        a64_try_rewind_adjacent_cmp(s, "FCCMP");
+        a64_cmp_note_consume(s, "FCCMP");
     }
 
     if (a->cond < 0x0e) { /* not always */
@@ -9618,6 +9918,12 @@ static bool trans_CCMP(DisasContext *s, arg_CCMP *a)
     TCGv_i64 tcg_rn, tcg_y;
     unsigned nzcv;
     bool has_andc;
+    TCGCond adj_cond;
+
+    if (a->cond >= 0x0e || a64_cmp_cond_to_tcg(&adj_cond, a->cond)) {
+        a64_try_rewind_adjacent_cmp(s, "CCMP");
+        a64_cmp_note_consume(s, "CCMP");
+    }
 
     /* Set T0 = !COND.  */
     tcg_gen_xori_i32(tcg_t0, a64_test_cc_bool_i32(s, a->cond), 1);
@@ -9692,6 +9998,46 @@ static bool trans_CSEL(DisasContext *s, arg_CSEL *a)
     TCGv_i64 tcg_rd = cpu_reg(s, a->rd);
     TCGv_i64 zero = tcg_constant_i64(0);
     DisasCompare64 c;
+
+#if defined(__i386__) || defined(__x86_64__)
+    {
+        TCGCond cond;
+        TCGv_i64 lhs, rhs;
+
+        if (s->a64_cmp_pending_valid && a64_cmp_cond_to_tcg(&cond, a->cond) &&
+            a64_try_rewind_adjacent_cmp(s, "CSEL-x86-direct")) {
+            a64_get_cmp_movcond_i64(s, cond, &lhs, &rhs);
+            a64_cmp_note_consume(s, "CSEL-x86-direct");
+            if (a->rn == 31 && a->rm == 31 && (a->else_inc ^ a->else_inv)) {
+                if (a->else_inv) {
+                    tcg_gen_negsetcond_i64(tcg_invert_cond(cond),
+                                           tcg_rd, lhs, rhs);
+                } else {
+                    tcg_gen_setcond_i64(tcg_invert_cond(cond),
+                                        tcg_rd, lhs, rhs);
+                }
+            } else {
+                TCGv_i64 t_true = cpu_reg(s, a->rn);
+                TCGv_i64 t_false = read_cpu_reg(s, a->rm, 1);
+
+                if (a->else_inv && a->else_inc) {
+                    tcg_gen_neg_i64(t_false, t_false);
+                } else if (a->else_inv) {
+                    tcg_gen_not_i64(t_false, t_false);
+                } else if (a->else_inc) {
+                    tcg_gen_addi_i64(t_false, t_false, 1);
+                }
+                tcg_gen_movcond_i64(cond, tcg_rd, lhs, rhs, t_true, t_false);
+            }
+
+            a64_emit_x86_save_cmp_flags(s->a64_cmp_pending_cc_op);
+            if (!a->sf) {
+                tcg_gen_ext32u_i64(tcg_rd, tcg_rd);
+            }
+            return true;
+        }
+    }
+#endif
 
     a64_test_cc(s, &c, a->cond);
 
@@ -11221,7 +11567,16 @@ static void aarch64_tr_init_disas_context(DisasContextBase *dcbase,
     dc->a64_cmp_pending_rhs = NULL;
     dc->a64_cmp_pending_rewind = NULL;
     dc->a64_cmp_pending_end = NULL;
+    dc->a64_cmp_pending_pc = 0;
+    dc->a64_cmp_pending_age = 0;
+    dc->a64_cmp_pending_consumed = false;
+    dc->a64_cmp_pending_consumer = NULL;
     dc->a64_cmp_pending_cc_op = A64_X86_CC_INVALID;
+    dc->a64_cmp_stat_records = 0;
+    dc->a64_cmp_stat_consumes = 0;
+    dc->a64_cmp_stat_rewinds = 0;
+    dc->a64_cmp_stat_drops = 0;
+    dc->a64_cmp_stat_overwrites = 0;
 
 #ifdef CONFIG_USER_ONLY
     /* In sve_probe_page, we assume TBI is enabled. */
@@ -11320,6 +11675,9 @@ static void aarch64_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
     s->insn = insn;
     s->base.pc_next = pc + 4;
     s->a64_cmp_pending_keep = false;
+    if (s->a64_cmp_pending_valid) {
+        s->a64_cmp_pending_age++;
+    }
 
     s->fp_access_checked = 0;
     s->sve_access_checked = 0;
@@ -11369,11 +11727,16 @@ static void aarch64_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
     }
 
     if (!s->a64_cmp_pending_keep) {
+        a64_cmp_note_drop(s);
         s->a64_cmp_pending_valid = false;
         s->a64_cmp_pending_lhs = NULL;
         s->a64_cmp_pending_rhs = NULL;
         s->a64_cmp_pending_rewind = NULL;
         s->a64_cmp_pending_end = NULL;
+        s->a64_cmp_pending_pc = 0;
+        s->a64_cmp_pending_age = 0;
+        s->a64_cmp_pending_consumed = false;
+        s->a64_cmp_pending_consumer = NULL;
         s->a64_cmp_pending_cc_op = A64_X86_CC_INVALID;
     }
 
@@ -11384,11 +11747,22 @@ static void aarch64_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
     if (s->btype > 0 && s->base.is_jmp != DISAS_NORETURN) {
         reset_btype(s);
     }
+
+    /*
+     * The compare fast paths must treat translator-inserted insn epilogue
+     * ops (such as btype reset) as part of the producer insn.  Otherwise we
+     * incorrectly reject truly adjacent cmp+consumer pairs.
+     */
+    if (s->a64_cmp_pending_keep) {
+        s->a64_cmp_pending_end = tcg_last_op();
+    }
 }
 
 static void aarch64_tr_tb_stop(DisasContextBase *dcbase, CPUState *cpu)
 {
     DisasContext *dc = container_of(dcbase, DisasContext, base);
+
+    a64_cmp_log_tb_summary(dc);
 
     if (unlikely(dc->ss_active)) {
         /* Note that this means single stepping WFI doesn't halt the CPU.

@@ -1675,6 +1675,40 @@ static const TCGOutOpBrcond outop_x86_cmp_brcond = {
     .out_ri = tgen_brcondi,
 };
 
+static void tcg_out_cmp_jcc(TCGContext *s, int rexw, int jcc,
+                            TCGArg arg1, TCGArg arg2, int const_arg2,
+                            TCGLabel *label, bool small)
+{
+    if (!const_arg2) {
+        tgen_arithr(s, ARITH_CMP + rexw, arg1, arg2);
+    } else {
+        tcg_debug_assert(!rexw || arg2 == (int32_t)arg2);
+        tgen_arithi(s, ARITH_CMP + rexw, arg1, arg2, 0);
+    }
+    tcg_out_jxx(s, jcc, label, small);
+}
+
+static void tgen_x86_cmp_jcc(TCGContext *s, TCGType type, int jcc,
+                             TCGReg arg1, TCGReg arg2, TCGLabel *label)
+{
+    int rexw = type == TCG_TYPE_I32 ? 0 : P_REXW;
+    tcg_out_cmp_jcc(s, rexw, jcc, arg1, arg2, false, label, false);
+}
+
+static void tgen_x86_cmp_jcci(TCGContext *s, TCGType type, int jcc,
+                              TCGReg arg1, tcg_target_long arg2,
+                              TCGLabel *label)
+{
+    int rexw = type == TCG_TYPE_I32 ? 0 : P_REXW;
+    tcg_out_cmp_jcc(s, rexw, jcc, arg1, arg2, true, label, false);
+}
+
+static const TCGOutOpX86CmpJcc outop_x86_cmp_jcc = {
+    .base.static_constraint = C_O0_I2(r, reT),
+    .out_rr = tgen_x86_cmp_jcc,
+    .out_ri = tgen_x86_cmp_jcci,
+};
+
 static void tgen_x86_a64_save_cmp_flags(TCGContext *s, TCGReg scratch,
                                         TCGReg status4, TCGReg nf,
                                         TCGReg zf, TCGReg cf, TCGReg vf)
@@ -4271,6 +4305,9 @@ tcg_target_op_def(TCGOpcode op, TCGType type, unsigned flags)
         return C_O1_I3(x, 0, x, x);
 
     case INDEX_op_x86_cmp_brcond:
+        return C_O0_I2(r, reT);
+
+    case INDEX_op_x86_cmp_jcc:
         return C_O0_I2(r, reT);
 
     case INDEX_op_x86_a64_save_cmp_flags:
