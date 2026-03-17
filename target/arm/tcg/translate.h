@@ -207,6 +207,9 @@ typedef struct DisasContext {
     bool a64_cmp_pending_sf;
     TCGv_i64 a64_cmp_pending_lhs;
     TCGv_i64 a64_cmp_pending_rhs;
+    TCGOp *a64_cmp_pending_rewind;
+    TCGOp *a64_cmp_pending_end;
+    uint32_t a64_cmp_pending_cc_op;
 } DisasContext;
 
 typedef struct DisasCompare {

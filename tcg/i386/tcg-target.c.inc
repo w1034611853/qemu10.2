@@ -1669,6 +1669,63 @@ static const TCGOutOpBrcond outop_brcond = {
     .out_ri = tgen_brcondi,
 };
 
+static const TCGOutOpBrcond outop_x86_cmp_brcond = {
+    .base.static_constraint = C_O0_I2(r, reT),
+    .out_rr = tgen_brcond,
+    .out_ri = tgen_brcondi,
+};
+
+static void tgen_x86_a64_save_cmp_flags(TCGContext *s, TCGReg scratch,
+                                        TCGReg status4, TCGReg nf,
+                                        TCGReg zf, TCGReg cf, TCGReg vf)
+{
+    tcg_debug_assert(scratch == TCG_REG_EAX);
+
+    /* LAHF captures SF/ZF/CF in AH; SETO adds OF in AL without clobbering SF. */
+    tcg_out8(s, 0x9f); /* lahf */
+    tcg_out_modrm(s, OPC_SETCC | JCC_JO, 0, scratch);
+
+    tcg_out_mov(s, TCG_TYPE_I32, nf, scratch);
+    tgen_arithi(s, ARITH_AND, nf, 0x8000, 0);
+    tcg_out_shifti(s, SHIFT_SHL, nf, 16);
+
+    tcg_out_mov(s, TCG_TYPE_I32, zf, scratch);
+    tcg_out_shifti(s, SHIFT_SHR, zf, 14);
+    tgen_arithi(s, ARITH_AND, zf, 1, 0);
+    tgen_arithi(s, ARITH_XOR, zf, 1, 0);
+
+    tcg_out_mov(s, TCG_TYPE_I32, cf, scratch);
+    tcg_out_shifti(s, SHIFT_SHR, cf, 8);
+    tgen_arithi(s, ARITH_AND, cf, 1, 0);
+    tgen_arithi(s, ARITH_XOR, cf, 1, 0);
+
+    tcg_out_mov(s, TCG_TYPE_I32, vf, scratch);
+    tgen_arithi(s, ARITH_AND, vf, 1, 0);
+    tcg_out_shifti(s, SHIFT_SHL, vf, 31);
+
+    tcg_out_mov(s, TCG_TYPE_I32, status4, vf);
+    tcg_out_shifti(s, SHIFT_SHR, status4, 31);
+
+    tcg_out_mov(s, TCG_TYPE_I32, scratch, nf);
+    tcg_out_shifti(s, SHIFT_SHR, scratch, 28);
+    tgen_arithr(s, ARITH_OR, status4, scratch);
+
+    tcg_out_mov(s, TCG_TYPE_I32, scratch, zf);
+    tgen_arithi(s, ARITH_XOR, scratch, 1, 0);
+    tcg_out_shifti(s, SHIFT_SHL, scratch, 2);
+    tgen_arithr(s, ARITH_OR, status4, scratch);
+
+    tcg_out_mov(s, TCG_TYPE_I32, scratch, cf);
+    tgen_arithi(s, ARITH_XOR, scratch, 1, 0);
+    tcg_out_shifti(s, SHIFT_SHL, scratch, 1);
+    tgen_arithr(s, ARITH_OR, status4, scratch);
+}
+
+static const TCGOutOpX86A64SaveCmpFlags outop_x86_a64_save_cmp_flags = {
+    .base.static_constraint = C_O6_I0(a, r, r, r, r, r),
+    .out = tgen_x86_a64_save_cmp_flags,
+};
+
 static void tcg_out_brcond2(TCGContext *s, TCGCond cond, TCGReg al,
                             TCGReg ah, TCGArg bl, bool blconst,
                             TCGArg bh, bool bhconst,
@@ -4212,6 +4269,12 @@ tcg_target_op_def(TCGOpcode op, TCGType type, unsigned flags)
     case INDEX_op_x86_vpshldv_vec:
     case INDEX_op_x86_vpshrdv_vec:
         return C_O1_I3(x, 0, x, x);
+
+    case INDEX_op_x86_cmp_brcond:
+        return C_O0_I2(r, reT);
+
+    case INDEX_op_x86_a64_save_cmp_flags:
+        return C_O6_I0(a, r, r, r, r, r);
 
     case INDEX_op_bitsel_vec:
         return C_O1_I3(x, x, x, x);

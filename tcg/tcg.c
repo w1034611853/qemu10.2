@@ -858,6 +858,7 @@ static int tcg_out_pool_finalize(TCGContext *s)
 #define C_N1O1_I1(O1, O2, I1)           C_PFX3(c_n1o1_i1_, O1, O2, I1),
 #define C_N2_I1(O1, O2, I1)             C_PFX3(c_n2_i1_, O1, O2, I1),
 
+#define C_O6_I0(O1, O2, O3, O4, O5, O6) C_PFX6(c_o6_i0_, O1, O2, O3, O4, O5, O6),
 #define C_O2_I1(O1, O2, I1)             C_PFX3(c_o2_i1_, O1, O2, I1),
 #define C_O2_I2(O1, O2, I1, I2)         C_PFX4(c_o2_i2_, O1, O2, I1, I2),
 #define C_O2_I3(O1, O2, I1, I2, I3)     C_PFX5(c_o2_i3_, O1, O2, I1, I2, I3),
@@ -883,6 +884,7 @@ static TCGConstraintSetIndex tcg_target_op_def(TCGOpcode, TCGType, unsigned);
 #undef C_N1_I2
 #undef C_N1O1_I1
 #undef C_N2_I1
+#undef C_O6_I0
 #undef C_O2_I1
 #undef C_O2_I2
 #undef C_O2_I3
@@ -910,6 +912,7 @@ typedef struct TCGConstraintSet {
 #define C_N1O1_I1(O1, O2, I1)           { 2, 1, { "&" #O1, #O2, #I1 } },
 #define C_N2_I1(O1, O2, I1)             { 2, 1, { "&" #O1, "&" #O2, #I1 } },
 
+#define C_O6_I0(O1, O2, O3, O4, O5, O6) { 6, 0, { #O1, #O2, #O3, #O4, #O5, #O6 } },
 #define C_O2_I1(O1, O2, I1)             { 2, 1, { #O1, #O2, #I1 } },
 #define C_O2_I2(O1, O2, I1, I2)         { 2, 2, { #O1, #O2, #I1, #I2 } },
 #define C_O2_I3(O1, O2, I1, I2, I3)     { 2, 3, { #O1, #O2, #I1, #I2, #I3 } },
@@ -931,6 +934,7 @@ static const TCGConstraintSet constraint_sets[] = {
 #undef C_N1_I2
 #undef C_N1O1_I1
 #undef C_N2_I1
+#undef C_O6_I0
 #undef C_O2_I1
 #undef C_O2_I2
 #undef C_O2_I3
@@ -953,6 +957,7 @@ static const TCGConstraintSet constraint_sets[] = {
 #define C_N1O1_I1(O1, O2, I1)           C_PFX3(c_n1o1_i1_, O1, O2, I1)
 #define C_N2_I1(O1, O2, I1)             C_PFX3(c_n2_i1_, O1, O2, I1)
 
+#define C_O6_I0(O1, O2, O3, O4, O5, O6) C_PFX6(c_o6_i0_, O1, O2, O3, O4, O5, O6)
 #define C_O2_I1(O1, O2, I1)             C_PFX3(c_o2_i1_, O1, O2, I1)
 #define C_O2_I2(O1, O2, I1, I2)         C_PFX4(c_o2_i2_, O1, O2, I1, I2)
 #define C_O2_I3(O1, O2, I1, I2, I3)     C_PFX5(c_o2_i3_, O1, O2, I1, I2, I3)
@@ -1016,6 +1021,12 @@ typedef struct TCGOutOpBrcond2 {
                 TCGArg bl, bool const_bl,
                 TCGArg bh, bool const_bh, TCGLabel *l);
 } TCGOutOpBrcond2;
+
+typedef struct TCGOutOpX86A64SaveCmpFlags {
+    TCGOutOp base;
+    void (*out)(TCGContext *s, TCGReg scratch, TCGReg status4,
+                TCGReg nf, TCGReg zf, TCGReg cf, TCGReg vf);
+} TCGOutOpX86A64SaveCmpFlags;
 
 typedef struct TCGOutOpBswap {
     TCGOutOp base;
@@ -1190,6 +1201,11 @@ static const TCGOutOp * const all_outop[NB_OPS] = {
     OUTOP(INDEX_op_and, TCGOutOpBinary, outop_and),
     OUTOP(INDEX_op_andc, TCGOutOpBinary, outop_andc),
     OUTOP(INDEX_op_brcond, TCGOutOpBrcond, outop_brcond),
+#if defined(__i386__) || defined(__x86_64__)
+    OUTOP(INDEX_op_x86_cmp_brcond, TCGOutOpBrcond, outop_x86_cmp_brcond),
+    OUTOP(INDEX_op_x86_a64_save_cmp_flags, TCGOutOpX86A64SaveCmpFlags,
+          outop_x86_a64_save_cmp_flags),
+#endif
     OUTOP(INDEX_op_bswap16, TCGOutOpBswap, outop_bswap16),
     OUTOP(INDEX_op_bswap32, TCGOutOpBswap, outop_bswap32),
     OUTOP(INDEX_op_clz, TCGOutOpBinary, outop_clz),
@@ -3019,6 +3035,7 @@ void tcg_dump_ops(TCGContext *s, FILE *f, bool have_prefs)
             }
             switch (c) {
             case INDEX_op_brcond:
+            case INDEX_op_x86_cmp_brcond:
             case INDEX_op_setcond:
             case INDEX_op_negsetcond:
             case INDEX_op_movcond:
@@ -3106,6 +3123,7 @@ void tcg_dump_ops(TCGContext *s, FILE *f, bool have_prefs)
             case INDEX_op_set_label:
             case INDEX_op_br:
             case INDEX_op_brcond:
+            case INDEX_op_x86_cmp_brcond:
             case INDEX_op_brcond2_i32:
                 col += ne_fprintf(f, "%s$L%d", k ? "," : "",
                                   arg_label(op->args[k])->id);
@@ -3561,6 +3579,7 @@ void tcg_op_remove(TCGContext *s, TCGOp *op)
         remove_label_use(op, 0);
         break;
     case INDEX_op_brcond:
+    case INDEX_op_x86_cmp_brcond:
         remove_label_use(op, 3);
         break;
     case INDEX_op_brcond2_i32:
@@ -3662,6 +3681,7 @@ static void move_label_uses(TCGLabel *to, TCGLabel *from)
             op->args[0] = label_arg(to);
             break;
         case INDEX_op_brcond:
+        case INDEX_op_x86_cmp_brcond:
             op->args[3] = label_arg(to);
             break;
         case INDEX_op_brcond2_i32:
@@ -5278,6 +5298,7 @@ static void tcg_reg_alloc_op(TCGContext *s, const TCGOp *op)
 
     switch (op->opc) {
     case INDEX_op_brcond:
+    case INDEX_op_x86_cmp_brcond:
         op_cond = op->args[2];
         break;
     case INDEX_op_setcond:
@@ -5857,6 +5878,41 @@ static void tcg_reg_alloc_op(TCGContext *s, const TCGOp *op)
             }
         }
         break;
+
+#if defined(__i386__) || defined(__x86_64__)
+    case INDEX_op_x86_cmp_brcond:
+        {
+            const TCGOutOpBrcond *out =
+                container_of(all_outop[op->opc], TCGOutOpBrcond, base);
+            TCGCond cond = new_args[2];
+            TCGLabel *label = arg_label(new_args[3]);
+
+            tcg_debug_assert(!const_args[0]);
+            if (const_args[1]) {
+                out->out_ri(s, type, cond, new_args[0], new_args[1], label);
+            } else {
+                out->out_rr(s, type, cond, new_args[0], new_args[1], label);
+            }
+        }
+        break;
+
+    case INDEX_op_x86_a64_save_cmp_flags:
+        {
+            const TCGOutOpX86A64SaveCmpFlags *out =
+                container_of(all_outop[op->opc],
+                             TCGOutOpX86A64SaveCmpFlags, base);
+
+            tcg_debug_assert(!const_args[0]);
+            tcg_debug_assert(!const_args[1]);
+            tcg_debug_assert(!const_args[2]);
+            tcg_debug_assert(!const_args[3]);
+            tcg_debug_assert(!const_args[4]);
+            tcg_debug_assert(!const_args[5]);
+            out->out(s, new_args[0], new_args[1], new_args[2],
+                     new_args[3], new_args[4], new_args[5]);
+        }
+        break;
+#endif
 
     case INDEX_op_movcond:
         {

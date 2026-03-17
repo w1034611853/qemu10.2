@@ -359,14 +359,540 @@ t27_after:
     b       shared_nzcv_consumer
 t28_after:
     expect_reg_reg x2, x14, 0x28
-    b       after_shared_nzcv_consumer
+
+    /* 0x29: Adjacent 32-bit CMP -> B.eq */
+    mov     w0, #1
+    cmp     w0, #1
+    b.eq    t29_ok
+    mov     x20, #0x29
+    b       fail
+t29_ok:
+
+    /* 0x2a: Adjacent 32-bit CMP -> CSEL */
+    mov     x3, #55
+    mov     x4, #66
+    mov     w0, #1
+    lsl     w0, w0, #31       /* INT32_MIN */
+    mov     w1, #1
+    cmp     w0, w1
+    csel    x2, x3, x4, lt
+    expect_reg_imm x2, 55, 0x2a
+
+    /* 0x2b: 32-bit CMP -> MRS NZCV */
+    movn    w0, #0            /* 0xffffffff */
+    mov     w1, #0
+    cmp     w0, w1
+    mrs     x2, nzcv
+    lsr     x2, x2, #28
+    expect_reg_imm x2, 0xa, 0x2b
+
+    /* 0x2c: MSR NZCV -> B.mi via split fallback */
+    movz    x0, #0x8000, lsl #16
+    msr     nzcv, x0
+    b.mi    t2c_ok
+    mov     x20, #0x2c
+    b       fail
+t2c_ok:
+
+    /* 0x2d: MSR NZCV -> CSEL via split fallback */
+    movz    x0, #0x6000, lsl #16
+    msr     nzcv, x0
+    mov     x3, #11
+    mov     x4, #22
+    csel    x2, x3, x4, eq
+    expect_reg_imm x2, 11, 0x2d
+
+    /* 0x2e: MSR NZCV -> ADC via split fallback */
+    movz    x0, #0x2000, lsl #16
+    msr     nzcv, x0
+    mov     x2, #10
+    mov     x3, #20
+    adc     x4, x2, x3
+    expect_reg_imm x4, 31, 0x2e
+
+    /* 0x2f: MSR NZCV -> MRS NZCV via split fallback */
+    movz    x0, #0x1000, lsl #16
+    msr     nzcv, x0
+    expect_nzcv 0x1, 0x2f
+
+    /* 0x30: ANDS/TST fallback -> B.eq */
+    mov     x0, #3
+    mov     x1, #4
+    ands    xzr, x0, x1
+    b.eq    t30_ok
+    mov     x20, #0x30
+    b       fail
+t30_ok:
+
+    /* 0x31: TST fallback -> CSEL */
+    mov     x0, #3
+    mov     x1, #1
+    tst     x0, x1
+    mov     x3, #11
+    mov     x4, #22
+    csel    x2, x3, x4, eq
+    expect_reg_imm x2, 22, 0x31
+
+    /* 0x32: ADDS fallback -> B.vs */
+    mov     x0, #1
+    lsl     x0, x0, #63
+    sub     x0, x0, #1        /* INT64_MAX */
+    mov     x1, #1
+    adds    xzr, x0, x1
+    b.vs    t32_ok
+    mov     x20, #0x32
+    b       fail
+t32_ok:
+
+    /* 0x33: CMN fallback -> ADC */
+    movn    x0, #0            /* -1 */
+    mov     x1, #1
+    cmn     x0, x1
+    mov     x2, #10
+    mov     x3, #20
+    adc     x4, x2, x3
+    expect_reg_imm x4, 31, 0x33
+
+    /* 0x34: CMP producer TB -> shared CSEL consumer TB */
+    mov     x14, #55
+    adr     x15, t34_after
+    mov     x3, #55
+    mov     x4, #66
+    mov     x0, #5
+    cmp     x0, #5
+    b       shared_csel_consumer
+t34_after:
+    expect_reg_reg x2, x14, 0x34
+
+    /* 0x35: CMP producer TB -> shared ADC consumer TB */
+    mov     x14, #31
+    adr     x15, t35_after
+    mov     x5, #10
+    mov     x6, #20
+    mov     x0, #7
+    cmp     x0, #5
+    b       shared_adc_consumer
+t35_after:
+    expect_reg_reg x2, x14, 0x35
+
+    /* 0x36: CMP producer TB -> shared SBC consumer TB */
+    mov     x14, #2
+    adr     x15, t36_after
+    mov     x5, #5
+    mov     x6, #2
+    mov     x0, #1
+    cmp     x0, #3
+    b       shared_sbc_consumer
+t36_after:
+    expect_reg_reg x2, x14, 0x36
+
+    /* 0x37: Adjacent CMP -> CSEL */
+    mov     x3, #77
+    mov     x4, #88
+    mov     x0, #9
+    cmp     x0, #9
+    csel    x2, x3, x4, eq
+    expect_reg_imm x2, 77, 0x37
+
+    /* 0x38: Adjacent CMP -> FCSEL */
+    fmov    d2, #4.0
+    fmov    d3, #1.0
+    mov     x0, #9
+    cmp     x0, #9
+    fcsel   d4, d2, d3, eq
+    fmov    x5, d4
+    ldr     x6, =0x4010000000000000
+    mov     x20, #0x38
+    cmp     x5, x6
+    b.eq    1f
+    b       fail
+1:
+
+    /* 0x39: Adjacent CMP -> CCMP (condition true) */
+    mov     x1, #4
+    mov     x2, #4
+    mov     x0, #9
+    cmp     x0, #9
+    ccmp    x1, x2, #0x0, eq
+    expect_nzcv 0x6, 0x39
+
+    /* 0x3a: Adjacent CMP -> CCMP (condition false literal) */
+    mov     x1, #4
+    mov     x2, #4
+    mov     x0, #1
+    cmp     x0, #2
+    ccmp    x1, x2, #0xa, eq
+    expect_nzcv 0xa, 0x3a
+
+    /* 0x3b: Adjacent CMP -> FCCMP (condition true) */
+    fmov    d0, #1.0
+    fmov    d1, #1.0
+    mov     x0, #1
+    cmp     x0, #1
+    fccmp   d0, d1, #0x0, eq
+    expect_nzcv 0x6, 0x3b
+
+    /* 0x3c: Adjacent CMP -> FCCMP (condition false literal) */
+    fmov    d0, #1.0
+    fmov    d1, #2.0
+    mov     x0, #1
+    cmp     x0, #2
+    fccmp   d0, d1, #0xa, eq
+    expect_nzcv 0xa, 0x3c
+
+    /* 0x3d: Adjacent 32-bit CMP -> B.ne */
+    mov     w0, #2
+    cmp     w0, #1
+    b.ne    t3d_ok
+    mov     x20, #0x3d
+    b       fail
+t3d_ok:
+
+    /* 0x3e: Adjacent 32-bit CMP -> B.cs */
+    mov     w0, #5
+    mov     w1, #3
+    cmp     w0, w1
+    b.cs    t3e_ok
+    mov     x20, #0x3e
+    b       fail
+t3e_ok:
+
+    /* 0x3f: Adjacent 32-bit CMP -> B.cc */
+    mov     w0, #2
+    mov     w1, #5
+    cmp     w0, w1
+    b.cc    t3f_ok
+    mov     x20, #0x3f
+    b       fail
+t3f_ok:
+
+    /* 0x40: Adjacent 32-bit CMP overflow -> B.vs */
+    mov     w0, #1
+    lsl     w0, w0, #31       /* INT32_MIN */
+    mov     w1, #1
+    cmp     w0, w1
+    b.vs    t40_ok
+    mov     x20, #0x40
+    b       fail
+t40_ok:
+
+    /* 0x41: Adjacent 32-bit CMP -> ADC */
+    mov     w0, #5
+    mov     w1, #3
+    cmp     w0, w1
+    mov     x2, #10
+    mov     x3, #20
+    adc     x4, x2, x3
+    expect_reg_imm x4, 31, 0x41
+
+    /* 0x42: MSR NZCV -> B.eq via split fallback */
+    movz    x0, #0x6000, lsl #16
+    msr     nzcv, x0
+    b.eq    t42_ok
+    mov     x20, #0x42
+    b       fail
+t42_ok:
+
+    /* 0x43: MSR NZCV -> B.cs via split fallback */
+    movz    x0, #0x2000, lsl #16
+    msr     nzcv, x0
+    b.cs    t43_ok
+    mov     x20, #0x43
+    b       fail
+t43_ok:
+
+    /* 0x44: MSR NZCV -> B.vs via split fallback */
+    movz    x0, #0x1000, lsl #16
+    msr     nzcv, x0
+    b.vs    t44_ok
+    mov     x20, #0x44
+    b       fail
+t44_ok:
+
+    /* 0x45: MSR NZCV -> SBC via split fallback */
+    movz    x0, #0x2000, lsl #16
+    msr     nzcv, x0
+    mov     x2, #5
+    mov     x3, #2
+    sbc     x4, x2, x3
+    expect_reg_imm x4, 3, 0x45
+
+    /* 0x46: CMP + 1 unrelated insn + B.eq */
+    mov     x0, #7
+    cmp     x0, #7
+    mov     x9, #123
+    b.eq    t46_ok
+    mov     x20, #0x46
+    b       fail
+t46_ok:
+    expect_reg_imm x9, 123, 0x46
+
+    /* 0x47: CMP + 4 unrelated insns + CSEL */
+    mov     x0, #2
+    cmp     x0, #5
+    mov     x7, #1
+    eor     x8, x7, x7
+    orr     x9, x7, x7
+    add     x10, x9, #7
+    mov     x3, #11
+    mov     x4, #22
+    csel    x2, x3, x4, eq
+    expect_reg_imm x2, 22, 0x47
+
+    /* 0x48: CMP + 8 unrelated insns + ADC */
+    mov     x0, #5
+    mov     x1, #3
+    cmp     x0, x1
+    mov     x7, #1
+    mov     x8, #2
+    eor     x9, x7, x8
+    orr     x10, x7, x8
+    add     x11, x10, #7
+    sub     x12, x11, #3
+    lsl     x13, x12, #1
+    lsr     x14, x13, #1
+    mov     x2, #10
+    mov     x3, #20
+    adc     x4, x2, x3
+    expect_reg_imm x4, 31, 0x48
+
+    /* 0x49: CMP + 8 unrelated insns + MRS NZCV */
+    mov     x0, #2
+    cmp     x0, #5
+    mov     x7, #1
+    mov     x8, #2
+    eor     x9, x7, x8
+    orr     x10, x7, x8
+    add     x11, x10, #7
+    sub     x12, x11, #3
+    lsl     x13, x12, #1
+    lsr     x14, x13, #1
+    mrs     x2, nzcv
+    lsr     x2, x2, #28
+    expect_reg_imm x2, 0x8, 0x49
+
+    /* 0x4a: CMP producer TB -> shared B.eq consumer TB */
+    mov     x14, #1
+    adr     x15, t4a_after
+    mov     x0, #5
+    cmp     x0, #5
+    b       shared_bcond_eq_consumer
+t4a_after:
+    expect_reg_reg x2, x14, 0x4a
+
+    /* 0x4b: RMIF producer TB -> shared B.eq consumer TB */
+    mov     x14, #1
+    adr     x15, t4b_after
+    mov     x0, #0x6
+    rmif    x0, #0, #0xf
+    b       shared_bcond_eq_consumer
+t4b_after:
+    expect_reg_reg x2, x14, 0x4b
+
+    /* 0x4c: SETF8 producer TB -> shared B.eq consumer TB */
+    mov     x14, #1
+    adr     x15, t4c_after
+    mov     x0, #5
+    cmp     x0, #3            /* Seed C = 1 for SETF8 */
+    mov     x0, #0
+    setf8   w0
+    b       shared_bcond_eq_consumer
+t4c_after:
+    expect_reg_reg x2, x14, 0x4c
+
+    /* 0x4d: MSR NZCV producer TB -> shared B.eq consumer TB */
+    mov     x14, #1
+    adr     x15, t4d_after
+    movz    x0, #0x6000, lsl #16
+    msr     nzcv, x0
+    b       shared_bcond_eq_consumer
+t4d_after:
+    expect_reg_reg x2, x14, 0x4d
+
+    /* 0x4e: MSR NZCV producer TB -> shared CSEL consumer TB */
+    mov     x14, #11
+    adr     x15, t4e_after
+    mov     x3, #11
+    mov     x4, #22
+    movz    x0, #0x6000, lsl #16
+    msr     nzcv, x0
+    b       shared_csel_consumer
+t4e_after:
+    expect_reg_reg x2, x14, 0x4e
+
+    /* 0x4f: MSR NZCV producer TB -> shared ADC consumer TB */
+    mov     x14, #31
+    adr     x15, t4f_after
+    mov     x5, #10
+    mov     x6, #20
+    movz    x0, #0x2000, lsl #16
+    msr     nzcv, x0
+    b       shared_adc_consumer
+t4f_after:
+    expect_reg_reg x2, x14, 0x4f
+
+    /* 0x50: CMP + B + ADDS producer + CSEL */
+    mov     x0, #9
+    cmp     x0, #9
+    b       t50_target
+t50_target:
+    mov     x0, #1
+    lsl     x0, x0, #63       /* INT64_MIN */
+    sub     x0, x0, #1        /* INT64_MAX */
+    adds    xzr, x0, #1
+    mov     x3, #11
+    mov     x4, #22
+    csel    x2, x3, x4, vs
+    expect_reg_imm x2, 11, 0x50
+
+    /* 0x51: CMP + B + ANDS producer + CSEL */
+    mov     x0, #9
+    cmp     x0, #9
+    b       t51_target
+t51_target:
+    mov     x0, #3
+    mov     x1, #4
+    ands    xzr, x0, x1
+    mov     x3, #11
+    mov     x4, #22
+    csel    x2, x3, x4, eq
+    expect_reg_imm x2, 11, 0x51
+
+    /* 0x52: CMP + B + CFINV producer + ADC */
+    mov     x0, #9
+    cmp     x0, #5            /* Seed C = 1 */
+    b       t52_target
+t52_target:
+    cfinv
+    mov     x2, #10
+    mov     x3, #20
+    adc     x4, x2, x3
+    expect_reg_imm x4, 30, 0x52
+
+    /* 0x53: CMP + B + MSR NZCV producer + CSEL */
+    mov     x0, #9
+    cmp     x0, #9
+    b       t53_target
+t53_target:
+    movz    x0, #0x8000, lsl #16
+    msr     nzcv, x0
+    mov     x3, #11
+    mov     x4, #22
+    csel    x2, x3, x4, mi
+    expect_reg_imm x2, 11, 0x53
+
+    /* 0x54: RMIF -> CCMP -> CSEL */
+    mov     x0, #0x6
+    rmif    x0, #0, #0xf
+    mov     x1, #4
+    mov     x2, #4
+    ccmp    x1, x2, #0xa, eq
+    mov     x3, #11
+    mov     x4, #22
+    csel    x5, x3, x4, eq
+    expect_reg_imm x5, 11, 0x54
+
+    /* 0x55: MSR NZCV -> CCMP -> CSEL */
+    movz    x0, #0x6000, lsl #16
+    msr     nzcv, x0
+    mov     x1, #2
+    mov     x2, #5
+    ccmp    x1, x2, #0xa, eq
+    mov     x3, #11
+    mov     x4, #22
+    csel    x5, x3, x4, eq
+    expect_reg_imm x5, 22, 0x55
+
+    /* 0x56: Adjacent CMP -> CCMN (condition true) */
+    movn    x1, #0            /* -1 */
+    mov     x2, #1
+    mov     x0, #1
+    cmp     x0, #1
+    ccmn    x1, x2, #0xa, eq
+    expect_nzcv 0x6, 0x56
+
+    /* 0x57: Adjacent CMP -> CCMN (condition false literal) */
+    movn    x1, #0            /* -1 */
+    mov     x2, #1
+    mov     x0, #1
+    cmp     x0, #2
+    ccmn    x1, x2, #0xa, eq
+    expect_nzcv 0xa, 0x57
+
+    /* 0x58: MSR NZCV -> FCSEL via split fallback */
+    movz    x0, #0x6000, lsl #16
+    msr     nzcv, x0
+    fmov    d2, #2.0
+    fmov    d3, #0.5
+    fcsel   d4, d2, d3, eq
+    fmov    x5, d4
+    ldr     x6, =0x4000000000000000
+    mov     x20, #0x58
+    cmp     x5, x6
+    b.eq    1f
+    b       fail
+1:
+
+    /* 0x59: RMIF -> FCSEL */
+    mov     x0, #0x6
+    rmif    x0, #0, #0xf
+    fmov    d2, #2.0
+    fmov    d3, #0.5
+    fcsel   d4, d2, d3, eq
+    fmov    x5, d4
+    ldr     x6, =0x4000000000000000
+    mov     x20, #0x59
+    cmp     x5, x6
+    b.eq    1f
+    b       fail
+1:
+
+    /* 0x5a: CMP + 4 unrelated insns + FCSEL */
+    mov     x0, #3
+    cmp     x0, #3
+    mov     x7, #1
+    eor     x8, x7, x7
+    orr     x9, x7, x7
+    add     x10, x9, #7
+    fmov    d2, #2.0
+    fmov    d3, #0.5
+    fcsel   d4, d2, d3, eq
+    fmov    x5, d4
+    ldr     x6, =0x4000000000000000
+    mov     x20, #0x5a
+    cmp     x5, x6
+    b.eq    1f
+    b       fail
+1:
+
+    b       after_shared_consumers
 
 shared_nzcv_consumer:
     mrs     x2, nzcv
     lsr     x2, x2, #28
     br      x15
 
-after_shared_nzcv_consumer:
+shared_csel_consumer:
+    csel    x2, x3, x4, eq
+    br      x15
+
+shared_adc_consumer:
+    adc     x2, x5, x6
+    br      x15
+
+shared_sbc_consumer:
+    sbc     x2, x5, x6
+    br      x15
+
+shared_bcond_eq_consumer:
+    b.eq    1f
+    mov     x2, #0
+    br      x15
+1:
+    mov     x2, #1
+    br      x15
+
+after_shared_consumers:
 
 pass:
     mov     x0, #1

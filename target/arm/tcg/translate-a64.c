@@ -477,13 +477,18 @@ static inline void a64_invalidate_x86_flags(void)
 }
 
 static void a64_record_cmp_for_bcond(DisasContext *s, bool sf,
-                                     TCGv_i64 lhs, TCGv_i64 rhs)
+                                     TCGv_i64 lhs, TCGv_i64 rhs,
+                                     TCGOp *rewind, TCGOp *end,
+                                     uint32_t cc_op)
 {
     s->a64_cmp_pending_valid = true;
     s->a64_cmp_pending_keep = true;
     s->a64_cmp_pending_sf = sf;
     s->a64_cmp_pending_lhs = lhs;
     s->a64_cmp_pending_rhs = rhs;
+    s->a64_cmp_pending_rewind = rewind;
+    s->a64_cmp_pending_end = end;
+    s->a64_cmp_pending_cc_op = cc_op;
 }
 
 static void a64_save_status4_sub(int sf)
@@ -628,32 +633,6 @@ static void a64_test_cc_status4(TCGv_i32 dst, int cc)
     }
 }
 
-static TCGv_i32 a64_test_cc_bool_i32(int cc)
-{
-    TCGv_i32 ret = tcg_temp_new_i32();
-    TCGLabel *label_fallback = gen_new_label();
-    TCGLabel *label_done = gen_new_label();
-    DisasCompare c32;
-
-    tcg_gen_brcondi_i32(TCG_COND_EQ, cpu_x86_flags_valid, 0, label_fallback);
-    a64_test_cc_status4(ret, cc);
-    tcg_gen_br(label_done);
-
-    gen_set_label(label_fallback);
-    arm_test_cc(&c32, cc);
-    tcg_gen_setcondi_i32(c32.cond, ret, c32.value, 0);
-
-    gen_set_label(label_done);
-    return ret;
-}
-
-static void a64_gen_test_cc(int cc, TCGLabel *label)
-{
-    TCGv_i32 cond = a64_test_cc_bool_i32(cc);
-
-    tcg_gen_brcondi_i32(TCG_COND_NE, cond, 0, label);
-}
-
 static bool a64_cmp_cond_to_tcg(TCGCond *cond, int cc)
 {
     switch (cc) {
@@ -692,6 +671,61 @@ static bool a64_cmp_cond_to_tcg(TCGCond *cond, int cc)
     }
 }
 
+static bool a64_try_set_cmp_cond_bool_i32(DisasContext *s, int cc, TCGv_i32 dst)
+{
+    TCGCond cond;
+
+    if (!s->a64_cmp_pending_valid || !a64_cmp_cond_to_tcg(&cond, cc)) {
+        return false;
+    }
+
+    if (s->a64_cmp_pending_sf) {
+        TCGv_i64 tmp = tcg_temp_new_i64();
+
+        tcg_gen_setcond_i64(cond, tmp, s->a64_cmp_pending_lhs,
+                            s->a64_cmp_pending_rhs);
+        tcg_gen_extrl_i64_i32(dst, tmp);
+    } else {
+        TCGv_i32 lhs = tcg_temp_new_i32();
+        TCGv_i32 rhs = tcg_temp_new_i32();
+
+        tcg_gen_extrl_i64_i32(lhs, s->a64_cmp_pending_lhs);
+        tcg_gen_extrl_i64_i32(rhs, s->a64_cmp_pending_rhs);
+        tcg_gen_setcond_i32(cond, dst, lhs, rhs);
+    }
+    return true;
+}
+
+static TCGv_i32 a64_test_cc_bool_i32(DisasContext *s, int cc)
+{
+    TCGv_i32 ret = tcg_temp_new_i32();
+    TCGLabel *label_fallback = gen_new_label();
+    TCGLabel *label_done = gen_new_label();
+    DisasCompare c32;
+
+    if (a64_try_set_cmp_cond_bool_i32(s, cc, ret)) {
+        return ret;
+    }
+
+    tcg_gen_brcondi_i32(TCG_COND_EQ, cpu_x86_flags_valid, 0, label_fallback);
+    a64_test_cc_status4(ret, cc);
+    tcg_gen_br(label_done);
+
+    gen_set_label(label_fallback);
+    arm_test_cc(&c32, cc);
+    tcg_gen_setcondi_i32(c32.cond, ret, c32.value, 0);
+
+    gen_set_label(label_done);
+    return ret;
+}
+
+static void a64_gen_test_cc(DisasContext *s, int cc, TCGLabel *label)
+{
+    TCGv_i32 cond = a64_test_cc_bool_i32(s, cc);
+
+    tcg_gen_brcondi_i32(TCG_COND_NE, cond, 0, label);
+}
+
 static bool a64_try_emit_cmp_bcond(DisasContext *s, int cc, TCGLabel *label)
 {
     TCGCond cond;
@@ -714,11 +748,124 @@ static bool a64_try_emit_cmp_bcond(DisasContext *s, int cc, TCGLabel *label)
     return true;
 }
 
-static void a64_test_cc(DisasCompare64 *c64, int cc)
+static void gen_goto_tb(DisasContext *s, unsigned tb_slot_idx, int64_t diff);
+
+#if defined(__i386__) || defined(__x86_64__)
+static void a64_add_label_use(TCGLabel *label, TCGOp *op)
+{
+    TCGLabelUse *u = tcg_malloc(sizeof(*u));
+
+    u->op = op;
+    QSIMPLEQ_INSERT_TAIL(&label->branches, u, next);
+}
+
+static void a64_emit_x86_cmp_brcond_i64(TCGCond cond, TCGv_i64 lhs,
+                                        TCGv_i64 rhs, TCGLabel *label)
+{
+    TCGOp *op;
+
+    if (cond == TCG_COND_ALWAYS) {
+        tcg_gen_br(label);
+        return;
+    }
+    if (cond == TCG_COND_NEVER) {
+        return;
+    }
+
+    op = tcg_emit_op(INDEX_op_x86_cmp_brcond, 4);
+    TCGOP_TYPE(op) = TCG_TYPE_I64;
+    tcg_set_insn_param(op, 0, tcgv_i64_arg(lhs));
+    tcg_set_insn_param(op, 1, tcgv_i64_arg(rhs));
+    tcg_set_insn_param(op, 2, cond);
+    tcg_set_insn_param(op, 3, label_arg(label));
+    a64_add_label_use(label, op);
+}
+
+static void a64_emit_x86_cmp_brcond_i32(TCGCond cond, TCGv_i32 lhs,
+                                        TCGv_i32 rhs, TCGLabel *label)
+{
+    TCGOp *op;
+
+    if (cond == TCG_COND_ALWAYS) {
+        tcg_gen_br(label);
+        return;
+    }
+    if (cond == TCG_COND_NEVER) {
+        return;
+    }
+
+    op = tcg_emit_op(INDEX_op_x86_cmp_brcond, 4);
+    TCGOP_TYPE(op) = TCG_TYPE_I32;
+    tcg_set_insn_param(op, 0, tcgv_i32_arg(lhs));
+    tcg_set_insn_param(op, 1, tcgv_i32_arg(rhs));
+    tcg_set_insn_param(op, 2, cond);
+    tcg_set_insn_param(op, 3, label_arg(label));
+    a64_add_label_use(label, op);
+}
+
+static void a64_emit_x86_save_cmp_flags(uint32_t cc_op)
+{
+    TCGv_i32 scratch = tcg_temp_new_i32();
+    TCGOp *op = tcg_emit_op(INDEX_op_x86_a64_save_cmp_flags, 6);
+
+    TCGOP_TYPE(op) = TCG_TYPE_I32;
+    tcg_set_insn_param(op, 0, tcgv_i32_arg(scratch));
+    tcg_set_insn_param(op, 1, tcgv_i32_arg(cpu_x86_status4));
+    tcg_set_insn_param(op, 2, tcgv_i32_arg(cpu_NF));
+    tcg_set_insn_param(op, 3, tcgv_i32_arg(cpu_ZF));
+    tcg_set_insn_param(op, 4, tcgv_i32_arg(cpu_CF));
+    tcg_set_insn_param(op, 5, tcgv_i32_arg(cpu_VF));
+
+    tcg_gen_movi_i32(cpu_x86_cc_op, cc_op);
+    tcg_gen_movi_i32(cpu_x86_flags_valid, 1);
+}
+
+static bool a64_try_emit_x86_cmp_bcond(DisasContext *s, int cc,
+                                       DisasLabel match, int imm)
+{
+    TCGCond cond;
+
+    if (!s->a64_cmp_pending_valid || !s->a64_cmp_pending_rewind ||
+        s->a64_cmp_pending_end != tcg_last_op() ||
+        !a64_cmp_cond_to_tcg(&cond, cc)) {
+        return false;
+    }
+
+    tcg_remove_ops_after(s->a64_cmp_pending_rewind);
+    reset_btype(s);
+
+    if (s->a64_cmp_pending_sf) {
+        a64_emit_x86_cmp_brcond_i64(cond, s->a64_cmp_pending_lhs,
+                                    s->a64_cmp_pending_rhs, match.label);
+    } else {
+        TCGv_i32 lhs = tcg_temp_new_i32();
+        TCGv_i32 rhs = tcg_temp_new_i32();
+
+        tcg_gen_extrl_i64_i32(lhs, s->a64_cmp_pending_lhs);
+        tcg_gen_extrl_i64_i32(rhs, s->a64_cmp_pending_rhs);
+        a64_emit_x86_cmp_brcond_i32(cond, lhs, rhs, match.label);
+    }
+
+    a64_emit_x86_save_cmp_flags(s->a64_cmp_pending_cc_op);
+    gen_goto_tb(s, 0, 4);
+    set_disas_label(s, match);
+    a64_emit_x86_save_cmp_flags(s->a64_cmp_pending_cc_op);
+    gen_goto_tb(s, 1, imm);
+    return true;
+}
+#else
+static bool a64_try_emit_x86_cmp_bcond(DisasContext *s, int cc,
+                                       DisasLabel match, int imm)
+{
+    return false;
+}
+#endif
+
+static void a64_test_cc(DisasContext *s, DisasCompare64 *c64, int cc)
 {
     c64->cond = TCG_COND_NE;
     c64->value = tcg_temp_new_i64();
-    tcg_gen_extu_i32_i64(c64->value, a64_test_cc_bool_i32(cc));
+    tcg_gen_extu_i32_i64(c64->value, a64_test_cc_bool_i32(s, cc));
 }
 
 static void gen_rebuild_hflags(DisasContext *s)
@@ -1999,18 +2146,22 @@ static bool trans_B_cond(DisasContext *s, arg_B_cond *a)
     if (a->c && !dc_isar_feature(aa64_hbc, s)) {
         return false;
     }
-    reset_btype(s);
     if (a->cond < 0x0e) {
         /* genuinely conditional branches */
         DisasLabel match = gen_disas_label(s);
+        if (a64_try_emit_x86_cmp_bcond(s, a->cond, match, a->imm)) {
+            return true;
+        }
+        reset_btype(s);
         if (!a64_try_emit_cmp_bcond(s, a->cond, match.label)) {
-            a64_gen_test_cc(a->cond, match.label);
+            a64_gen_test_cc(s, a->cond, match.label);
         }
         gen_goto_tb(s, 0, 4);
         set_disas_label(s, match);
         gen_goto_tb(s, 1, a->imm);
     } else {
         /* 0xe and 0xf are both "always" conditions */
+        reset_btype(s);
         gen_goto_tb(s, 0, a->imm);
     }
     return true;
@@ -5252,6 +5403,7 @@ static bool gen_rri(DisasContext *s, arg_rri_sf *a,
 static bool do_addsub_imm(DisasContext *s, arg_rri_sf *a,
                           bool sub_op, bool setflags)
 {
+    TCGOp *cmp_rewind = NULL;
     TCGv_i64 tcg_rn = read_cpu_reg_sp(s, a->rn, a->sf);
     TCGv_i64 tcg_imm = tcg_constant_i64(a->imm);
     TCGv_i64 tcg_rd = setflags ? cpu_reg(s, a->rd) : cpu_reg_sp(s, a->rd);
@@ -5264,6 +5416,9 @@ static bool do_addsub_imm(DisasContext *s, arg_rri_sf *a,
         }
     } else {
         if (sub_op) {
+            if (a->rd == 31) {
+                cmp_rewind = tcg_last_op();
+            }
             gen_sub_CC(a->sf, tcg_rd, tcg_rn, tcg_imm);
         } else {
             gen_add_CC(a->sf, tcg_rd, tcg_rn, tcg_imm);
@@ -5276,7 +5431,10 @@ static bool do_addsub_imm(DisasContext *s, arg_rri_sf *a,
 
     if (setflags && sub_op && a->rd == 31) {
         a64_save_status4_sub(a->sf);
-        a64_record_cmp_for_bcond(s, a->sf, tcg_rn, tcg_imm);
+        a64_record_cmp_for_bcond(s, a->sf, tcg_rn, tcg_imm, cmp_rewind,
+                                 tcg_last_op(),
+                                 a->sf ? A64_X86_CC_SUB64
+                                       : A64_X86_CC_SUB32);
     }
     return true;
 }
@@ -7825,7 +7983,7 @@ static bool trans_FCSEL(DisasContext *s, arg_FCSEL *a)
     read_vec_element(s, t_true, a->rn, 0, a->esz);
     read_vec_element(s, t_false, a->rm, 0, a->esz);
 
-    a64_test_cc(&c, a->cond);
+    a64_test_cc(s, &c, a->cond);
     tcg_gen_movcond_i64(c.cond, t_true, c.value, tcg_constant_i64(0),
                         t_true, t_false);
 
@@ -8172,7 +8330,7 @@ static bool trans_FCCMP(DisasContext *s, arg_FCCMP *a)
     if (a->cond < 0x0e) { /* not always */
         TCGLabel *label_match = gen_new_label();
         label_continue = gen_new_label();
-        a64_gen_test_cc(a->cond, label_match);
+        a64_gen_test_cc(s, a->cond, label_match);
         /* nomatch: */
         gen_set_nzcv(tcg_constant_i64(a->nzcv << 28));
         tcg_gen_br(label_continue);
@@ -9199,6 +9357,7 @@ TRANS(EOR_r, do_logic_reg, a, tcg_gen_xor_i64, tcg_gen_eqv_i64, false)
 static bool do_addsub_ext(DisasContext *s, arg_addsub_ext *a,
                           bool sub_op, bool setflags)
 {
+    TCGOp *cmp_rewind = NULL;
     TCGv_i64 tcg_rm, tcg_rn, tcg_rd, tcg_result;
 
     if (a->sa > 4) {
@@ -9225,6 +9384,9 @@ static bool do_addsub_ext(DisasContext *s, arg_addsub_ext *a,
         }
     } else {
         if (sub_op) {
+            if (a->rd == 31) {
+                cmp_rewind = tcg_last_op();
+            }
             gen_sub_CC(a->sf, tcg_result, tcg_rn, tcg_rm);
         } else {
             gen_add_CC(a->sf, tcg_result, tcg_rn, tcg_rm);
@@ -9239,7 +9401,10 @@ static bool do_addsub_ext(DisasContext *s, arg_addsub_ext *a,
 
     if (setflags && sub_op && a->rd == 31) {
         a64_save_status4_sub(a->sf);
-        a64_record_cmp_for_bcond(s, a->sf, tcg_rn, tcg_rm);
+        a64_record_cmp_for_bcond(s, a->sf, tcg_rn, tcg_rm, cmp_rewind,
+                                 tcg_last_op(),
+                                 a->sf ? A64_X86_CC_SUB64
+                                       : A64_X86_CC_SUB32);
     }
     return true;
 }
@@ -9252,6 +9417,7 @@ TRANS(SUBS_ext, do_addsub_ext, a, true, true)
 static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
                           bool sub_op, bool setflags)
 {
+    TCGOp *cmp_rewind = NULL;
     TCGv_i64 tcg_rd, tcg_rn, tcg_rm, tcg_result;
 
     if (a->st == 3 || (!a->sf && (a->sa & 32))) {
@@ -9273,6 +9439,9 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
         }
     } else {
         if (sub_op) {
+            if (a->rd == 31) {
+                cmp_rewind = tcg_last_op();
+            }
             gen_sub_CC(a->sf, tcg_result, tcg_rn, tcg_rm);
         } else {
             gen_add_CC(a->sf, tcg_result, tcg_rn, tcg_rm);
@@ -9287,7 +9456,10 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
 
     if (setflags && sub_op && a->rd == 31) {
         a64_save_status4_sub(a->sf);
-        a64_record_cmp_for_bcond(s, a->sf, tcg_rn, tcg_rm);
+        a64_record_cmp_for_bcond(s, a->sf, tcg_rn, tcg_rm, cmp_rewind,
+                                 tcg_last_op(),
+                                 a->sf ? A64_X86_CC_SUB64
+                                       : A64_X86_CC_SUB32);
     }
     return true;
 }
@@ -9448,7 +9620,7 @@ static bool trans_CCMP(DisasContext *s, arg_CCMP *a)
     bool has_andc;
 
     /* Set T0 = !COND.  */
-    tcg_gen_xori_i32(tcg_t0, a64_test_cc_bool_i32(a->cond), 1);
+    tcg_gen_xori_i32(tcg_t0, a64_test_cc_bool_i32(s, a->cond), 1);
 
     /* Load the arguments for the new comparison.  */
     if (a->imm) {
@@ -9521,7 +9693,7 @@ static bool trans_CSEL(DisasContext *s, arg_CSEL *a)
     TCGv_i64 zero = tcg_constant_i64(0);
     DisasCompare64 c;
 
-    a64_test_cc(&c, a->cond);
+    a64_test_cc(s, &c, a->cond);
 
     if (a->rn == 31 && a->rm == 31 && (a->else_inc ^ a->else_inv)) {
         /* CSET & CSETM.  */
@@ -11047,6 +11219,9 @@ static void aarch64_tr_init_disas_context(DisasContextBase *dcbase,
     dc->a64_cmp_pending_sf = false;
     dc->a64_cmp_pending_lhs = NULL;
     dc->a64_cmp_pending_rhs = NULL;
+    dc->a64_cmp_pending_rewind = NULL;
+    dc->a64_cmp_pending_end = NULL;
+    dc->a64_cmp_pending_cc_op = A64_X86_CC_INVALID;
 
 #ifdef CONFIG_USER_ONLY
     /* In sve_probe_page, we assume TBI is enabled. */
@@ -11197,6 +11372,9 @@ static void aarch64_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
         s->a64_cmp_pending_valid = false;
         s->a64_cmp_pending_lhs = NULL;
         s->a64_cmp_pending_rhs = NULL;
+        s->a64_cmp_pending_rewind = NULL;
+        s->a64_cmp_pending_end = NULL;
+        s->a64_cmp_pending_cc_op = A64_X86_CC_INVALID;
     }
 
     /*
