@@ -5355,6 +5355,7 @@ static uint64_t rndr_readfn(CPUARMState *env, const ARMCPRegInfo *ri)
     /* Success sets NZCV = 0000.  */
     env->NF = env->CF = env->VF = 0, env->ZF = 1;
     env->x86_status4 = 0;
+    env->x86_raw_flags = 0;
     env->x86_cc_op = A64_X86_CC_INVALID;
     env->x86_flags_valid = 0;
 

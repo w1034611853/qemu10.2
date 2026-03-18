@@ -1093,6 +1093,137 @@ t67_ok:
     expect_nzcv 0x8, 0x71
     expect_reg_reg x2, x8, 0x71
 
+    /* 0x72: Adjacent CMP -> B.eq taken -> ADC via saved canonical flags */
+    mov     x5, #10
+    mov     x6, #20
+    mov     x0, #4
+    cmp     x0, #4
+    b.eq    t72_ok
+    mov     x20, #0x72
+    b       fail
+t72_ok:
+    adc     x7, x5, x6
+    expect_nzcv 0x6, 0x72
+    expect_reg_imm x7, 31, 0x72
+
+    /* 0x73: Adjacent CMP -> B.eq fallthrough -> ADC via saved canonical flags */
+    mov     x5, #10
+    mov     x6, #20
+    mov     x0, #4
+    cmp     x0, #5
+    b.eq    t73_bad
+    adc     x7, x5, x6
+    expect_nzcv 0x8, 0x73
+    expect_reg_imm x7, 30, 0x73
+    b       t73_done
+t73_bad:
+    mov     x20, #0x73
+    b       fail
+t73_done:
+
+    /* 0x74: Adjacent CMP -> B.vs taken preserves overflow flags */
+    mov     x0, #1
+    lsl     x0, x0, #63
+    mov     x1, #1
+    cmp     x0, x1
+    b.vs    t74_ok
+    mov     x20, #0x74
+    b       fail
+t74_ok:
+    expect_nzcv 0x3, 0x74
+
+    /* 0x75: Adjacent CMP -> B.mi fallthrough preserves non-negative flags */
+    mov     x0, #7
+    cmp     x0, #7
+    b.mi    t75_bad
+    expect_nzcv 0x6, 0x75
+    b       t75_done
+t75_bad:
+    mov     x20, #0x75
+    b       fail
+t75_done:
+
+    /* 0x76: CMP + safe gap rewriting lhs -> B.eq taken using original flags */
+    mov     x5, #10
+    mov     x6, #20
+    mov     x0, #7
+    cmp     x0, #7
+    add     x0, x0, #1
+    mov     x9, #123
+    add     x9, x9, #1
+    eor     x10, x9, x9
+    b.eq    t76_ok
+    mov     x20, #0x76
+    b       fail
+t76_ok:
+    adc     x7, x5, x6
+    mrs     x11, nzcv
+    lsr     x11, x11, #28
+    expect_reg_imm x0, 8, 0x76
+    expect_reg_imm x7, 31, 0x76
+    expect_reg_imm x11, 6, 0x76
+
+    /* 0x77: CMP + safe gap rewriting lhs -> B.eq fallthrough keeps old flags */
+    mov     x5, #10
+    mov     x6, #20
+    mov     x0, #7
+    cmp     x0, #5
+    sub     x0, x0, #2
+    mov     x9, #1
+    add     x9, x9, #2
+    eor     x10, x9, x9
+    b.eq    t77_bad
+    adc     x7, x5, x6
+    mrs     x11, nzcv
+    lsr     x11, x11, #28
+    expect_reg_imm x0, 5, 0x77
+    expect_reg_imm x7, 31, 0x77
+    expect_reg_imm x11, 2, 0x77
+    b       t77_done
+t77_bad:
+    mov     x20, #0x77
+    b       fail
+t77_done:
+
+    /* 0x78: CMP (reg) + safe gap rewriting both inputs -> B.eq uses snapshots */
+    mov     x5, #10
+    mov     x6, #20
+    mov     x0, #9
+    mov     x1, #9
+    cmp     x0, x1
+    add     x0, x0, #5
+    sub     x1, x1, #4
+    mov     x9, #3
+    eor     x10, x9, x9
+    b.eq    t78_ok
+    mov     x20, #0x78
+    b       fail
+t78_ok:
+    adc     x7, x5, x6
+    mrs     x11, nzcv
+    lsr     x11, x11, #28
+    expect_reg_imm x0, 14, 0x78
+    expect_reg_imm x1, 5, 0x78
+    expect_reg_imm x7, 31, 0x78
+    expect_reg_imm x11, 6, 0x78
+
+    /* 0x79: CMP + safe gap + B.vs keeps overflow from original compare */
+    mov     x0, #1
+    lsl     x0, x0, #63
+    mov     x1, #1
+    cmp     x0, x1
+    add     x0, x0, #1
+    mov     x9, #1
+    add     x9, x9, #2
+    eor     x10, x9, x9
+    b.vs    t79_ok
+    mov     x20, #0x79
+    b       fail
+t79_ok:
+    mrs     x11, nzcv
+    lsr     x11, x11, #28
+    expect_reg_imm x11, 3, 0x79
+
     b       after_shared_consumers
 
 shared_nzcv_consumer:

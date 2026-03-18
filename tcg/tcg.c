@@ -1037,7 +1037,7 @@ typedef struct TCGOutOpBrcond2 {
 
 typedef struct TCGOutOpX86A64SaveCmpFlags {
     TCGOutOp base;
-    void (*out)(TCGContext *s, TCGReg scratch, TCGReg status4, TCGReg tmp);
+    void (*out)(TCGContext *s, TCGReg scratch, TCGReg rawflags, TCGReg tmp);
 } TCGOutOpX86A64SaveCmpFlags;
 
 typedef struct TCGOutOpBswap {
@@ -1216,8 +1216,8 @@ static const TCGOutOp * const all_outop[NB_OPS] = {
 #if defined(__i386__) || defined(__x86_64__)
     OUTOP(INDEX_op_x86_cmp_brcond, TCGOutOpBrcond, outop_x86_cmp_brcond),
     OUTOP(INDEX_op_x86_cmp_jcc, TCGOutOpX86CmpJcc, outop_x86_cmp_jcc),
-    OUTOP(INDEX_op_x86_a64_save_cmp_flags, TCGOutOpX86A64SaveCmpFlags,
-          outop_x86_a64_save_cmp_flags),
+    OUTOP(INDEX_op_x86_a64_capture_cmp_rawflags, TCGOutOpX86A64SaveCmpFlags,
+          outop_x86_a64_capture_cmp_rawflags),
 #endif
     OUTOP(INDEX_op_bswap16, TCGOutOpBswap, outop_bswap16),
     OUTOP(INDEX_op_bswap32, TCGOutOpBswap, outop_bswap32),
@@ -5934,7 +5934,7 @@ static void tcg_reg_alloc_op(TCGContext *s, const TCGOp *op)
         }
         break;
 
-    case INDEX_op_x86_a64_save_cmp_flags:
+    case INDEX_op_x86_a64_capture_cmp_rawflags:
         {
             const TCGOutOpX86A64SaveCmpFlags *out =
                 container_of(all_outop[op->opc],

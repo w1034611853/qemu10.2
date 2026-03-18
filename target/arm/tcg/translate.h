@@ -40,10 +40,12 @@ typedef enum A64FlagsRep {
     A64_FLAGS_REP_UNKNOWN = 0,
     A64_FLAGS_REP_SPLIT,
     A64_FLAGS_REP_STATUS4,
+    A64_FLAGS_REP_RAW,
 } A64FlagsRep;
 
 typedef struct DisasContext {
     DisasContextBase base;
+    CPUARMState *env;
     const ARMISARegisters *isar;
     DisasDelayException *delay_excp_list;
 
@@ -222,6 +224,7 @@ typedef struct DisasContext {
     bool a64_cmp_pending_consumed;
     const char *a64_cmp_pending_consumer;
     uint32_t a64_cmp_pending_cc_op;
+    uint8_t a64_cmp_pending_gap_insns;
     uint32_t a64_cmp_stat_records;
     uint32_t a64_cmp_stat_consumes;
     uint32_t a64_cmp_stat_rewinds;
@@ -236,7 +239,8 @@ typedef struct DisasCompare {
 
 /* Share the TCG temporaries common between 32 and 64 bit modes.  */
 extern TCGv_i32 cpu_NF, cpu_ZF, cpu_CF, cpu_VF;
-extern TCGv_i32 cpu_x86_status4, cpu_x86_cc_op, cpu_x86_flags_valid;
+extern TCGv_i32 cpu_x86_status4, cpu_x86_raw_flags;
+extern TCGv_i32 cpu_x86_cc_op, cpu_x86_flags_valid;
 extern TCGv_i64 cpu_exclusive_addr;
 extern TCGv_i64 cpu_exclusive_val;
 

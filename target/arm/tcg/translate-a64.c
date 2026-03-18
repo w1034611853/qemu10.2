@@ -595,13 +595,15 @@ static void a64_cmp_log_tb_summary(DisasContext *s)
                   s->a64_cmp_stat_overwrites);
 }
 
-static inline void a64_invalidate_x86_flags(void)
+static inline void a64_invalidate_x86_flags(DisasContext *s)
 {
     /*
      * x86_cc_op is only meaningful while x86_flags_valid says the canonical
      * cache is live, so clearing the valid bit is sufficient on the hot path.
      */
-    tcg_gen_movi_i32(cpu_x86_flags_valid, A64_X86_FLAGS_INVALID);
+    if (s->a64_flags_rep != A64_FLAGS_REP_SPLIT) {
+        tcg_gen_movi_i32(cpu_x86_flags_valid, A64_X86_FLAGS_INVALID);
+    }
 }
 
 static inline void a64_note_flags_unknown(DisasContext *s)
@@ -617,6 +619,11 @@ static inline void a64_note_flags_split(DisasContext *s)
 static inline void a64_note_flags_status4(DisasContext *s)
 {
     s->a64_flags_rep = A64_FLAGS_REP_STATUS4;
+}
+
+static inline void a64_note_flags_raw(DisasContext *s)
+{
+    s->a64_flags_rep = A64_FLAGS_REP_RAW;
 }
 
 static void a64_status4_get_c(TCGv_i32 dst);
@@ -636,36 +643,112 @@ static void a64_materialize_split_flags_from_status4(void)
     tcg_gen_shli_i32(cpu_VF, cpu_VF, 31);
 }
 
+static void a64_extract_raw_flags_bit(TCGv_i32 dst, unsigned bit)
+{
+    tcg_gen_shri_i32(dst, cpu_x86_raw_flags, bit);
+    tcg_gen_andi_i32(dst, dst, 1);
+}
+
+static void a64_raw_flags_get_c(TCGv_i32 dst)
+{
+    a64_extract_raw_flags_bit(dst, 8);
+    tcg_gen_xori_i32(dst, dst, 1);
+}
+
+static void a64_materialize_split_flags_from_rawflags(void)
+{
+    tcg_gen_andi_i32(cpu_NF, cpu_x86_raw_flags, 0x8000);
+    tcg_gen_shli_i32(cpu_NF, cpu_NF, 16);
+
+    tcg_gen_andi_i32(cpu_ZF, cpu_x86_raw_flags, 0x4000);
+    tcg_gen_xori_i32(cpu_ZF, cpu_ZF, 0x4000);
+    tcg_gen_shri_i32(cpu_ZF, cpu_ZF, 14);
+
+    a64_raw_flags_get_c(cpu_CF);
+
+    tcg_gen_andi_i32(cpu_VF, cpu_x86_raw_flags, 1);
+    tcg_gen_shli_i32(cpu_VF, cpu_VF, 31);
+}
+
 /*
  * Keep canonical status4 on the fast path, and only reconstruct split flags
  * when an instruction really needs the old CF/NF/ZF/VF representation.
  */
 static void a64_ensure_split_flags(DisasContext *s)
 {
-    TCGLabel *label_done = gen_new_label();
+    switch (s->a64_flags_rep) {
+    case A64_FLAGS_REP_SPLIT:
+        return;
+    case A64_FLAGS_REP_STATUS4:
+        a64_materialize_split_flags_from_status4();
+        a64_invalidate_x86_flags(s);
+        a64_note_flags_split(s);
+        return;
+    case A64_FLAGS_REP_RAW:
+        a64_materialize_split_flags_from_rawflags();
+        a64_invalidate_x86_flags(s);
+        a64_note_flags_split(s);
+        return;
+    case A64_FLAGS_REP_UNKNOWN:
+    default:
+        {
+            TCGLabel *label_raw = gen_new_label();
+            TCGLabel *label_done = gen_new_label();
 
-    tcg_gen_brcondi_i32(TCG_COND_EQ, cpu_x86_flags_valid,
-                        A64_X86_FLAGS_INVALID, label_done);
-    a64_materialize_split_flags_from_status4();
-    a64_invalidate_x86_flags();
-    gen_set_label(label_done);
-    a64_note_flags_split(s);
+            tcg_gen_brcondi_i32(TCG_COND_EQ, cpu_x86_flags_valid,
+                                A64_X86_FLAGS_INVALID, label_done);
+            tcg_gen_brcondi_i32(TCG_COND_EQ, cpu_x86_flags_valid,
+                                A64_X86_FLAGS_RAW, label_raw);
+            a64_materialize_split_flags_from_status4();
+            a64_invalidate_x86_flags(s);
+            tcg_gen_br(label_done);
+
+            gen_set_label(label_raw);
+            a64_materialize_split_flags_from_rawflags();
+            a64_invalidate_x86_flags(s);
+            gen_set_label(label_done);
+            a64_note_flags_split(s);
+            return;
+        }
+    }
 }
 
-static void a64_ensure_carry_flag(void)
+static void a64_ensure_carry_flag(DisasContext *s)
 {
-    TCGLabel *label_done = gen_new_label();
+    switch (s->a64_flags_rep) {
+    case A64_FLAGS_REP_SPLIT:
+        return;
+    case A64_FLAGS_REP_STATUS4:
+        a64_status4_get_c(cpu_CF);
+        return;
+    case A64_FLAGS_REP_RAW:
+        a64_raw_flags_get_c(cpu_CF);
+        return;
+    case A64_FLAGS_REP_UNKNOWN:
+    default:
+        {
+            TCGLabel *label_raw = gen_new_label();
+            TCGLabel *label_done = gen_new_label();
 
-    tcg_gen_brcondi_i32(TCG_COND_EQ, cpu_x86_flags_valid,
-                        A64_X86_FLAGS_INVALID, label_done);
-    a64_status4_get_c(cpu_CF);
-    gen_set_label(label_done);
+            tcg_gen_brcondi_i32(TCG_COND_EQ, cpu_x86_flags_valid,
+                                A64_X86_FLAGS_INVALID, label_done);
+            tcg_gen_brcondi_i32(TCG_COND_EQ, cpu_x86_flags_valid,
+                                A64_X86_FLAGS_RAW, label_raw);
+            a64_status4_get_c(cpu_CF);
+            tcg_gen_br(label_done);
+
+            gen_set_label(label_raw);
+            a64_raw_flags_get_c(cpu_CF);
+            gen_set_label(label_done);
+            return;
+        }
+    }
 }
 
 static void a64_record_cmp_for_bcond(DisasContext *s, bool sf,
                                      TCGv_i64 lhs, TCGv_i64 rhs,
                                      TCGOp *rewind, TCGOp *end,
-                                     uint32_t cc_op)
+                                     uint32_t cc_op, uint8_t gap_insns)
 {
     bool trace = a64_cmp_trace_enabled();
 
@@ -678,6 +761,7 @@ static void a64_record_cmp_for_bcond(DisasContext *s, bool sf,
     s->a64_cmp_pending_rewind = rewind;
     s->a64_cmp_pending_end = end;
     s->a64_cmp_pending_cc_op = cc_op;
+    s->a64_cmp_pending_gap_insns = gap_insns;
     if (trace) {
         s->a64_cmp_pending_pc = s->pc_curr;
         s->a64_cmp_pending_age = 0;
@@ -686,6 +770,96 @@ static void a64_record_cmp_for_bcond(DisasContext *s, bool sf,
     }
     a64_cmp_note_record(s, sf, cc_op);
 }
+
+static bool a64_insn_is_plain_bcond(uint32_t insn, int *cc)
+{
+    if ((insn & 0xff000010u) != 0x54000000u) {
+        return false;
+    }
+
+    *cc = extract32(insn, 0, 4);
+    return *cc < 0x0e;
+}
+
+#if defined(__i386__) || defined(__x86_64__)
+enum {
+    A64_CMP_PENDING_GAP_MAX = 8,
+};
+
+static bool a64_insn_is_cmp_gap_safe(uint32_t insn)
+{
+    uint32_t opc;
+
+    if (insn == 0xd503201fu) { /* NOP */
+        return true;
+    }
+
+    if ((insn & 0x1f800000u) == 0x12800000u) { /* MOVN/MOVZ/MOVK */
+        return true;
+    }
+
+    if ((insn & 0x1f800000u) == 0x13000000u) { /* SBFM/BFM/UBFM */
+        return true;
+    }
+
+    if ((insn & 0x1f000000u) == 0x11000000u &&
+        !extract32(insn, 29, 1)) { /* ADD/SUB immediate without flags */
+        return true;
+    }
+
+    if ((insn & 0x1f000000u) == 0x0a000000u) { /* Logical shifted reg */
+        opc = extract32(insn, 29, 2);
+        if (opc != 3) {
+            return true; /* AND/BIC/ORR/ORN/EOR/EON */
+        }
+    }
+
+    if ((insn & 0x1f200000u) == 0x0b000000u &&
+        !extract32(insn, 29, 1)) { /* ADD/SUB shifted reg without flags */
+        return true;
+    }
+
+    if ((insn & 0x1fe00000u) == 0x0b200000u &&
+        !extract32(insn, 29, 1)) { /* ADD/SUB extended reg without flags */
+        return true;
+    }
+
+    return false;
+}
+
+static bool a64_find_future_bcond_gap(DisasContext *s, uint8_t *gap_insns)
+{
+    target_ulong pc = s->base.pc_next;
+    int remaining = s->base.max_insns - s->base.num_insns;
+    int cc;
+
+    for (int gap = 0; gap < remaining && gap <= A64_CMP_PENDING_GAP_MAX;
+         gap++, pc += 4) {
+        uint32_t insn;
+
+        if (!translator_is_same_page(&s->base, pc)) {
+            return false;
+        }
+
+        insn = arm_ldl_code(s->env, &s->base, pc, s->sctlr_b);
+        if (a64_insn_is_plain_bcond(insn, &cc)) {
+            *gap_insns = gap;
+            return true;
+        }
+        if (!a64_insn_is_cmp_gap_safe(insn)) {
+            return false;
+        }
+    }
+    return false;
+}
+#else
+static bool a64_find_future_bcond_gap(DisasContext *s, uint8_t *gap_insns)
+{
+    (void)s;
+    (void)gap_insns;
+    return false;
+}
+#endif
 
 static void a64_extract_status4_bit(TCGv_i32 dst, unsigned bit)
 {
@@ -696,6 +870,78 @@ static void a64_extract_status4_bit(TCGv_i32 dst, unsigned bit)
 static void a64_status4_get_c(TCGv_i32 dst)
 {
     a64_extract_status4_bit(dst, 1);
+}
+
+static void a64_test_cc_rawflags(TCGv_i32 dst, int cc)
+{
+    TCGv_i32 n = tcg_temp_new_i32();
+    TCGv_i32 z = tcg_temp_new_i32();
+    TCGv_i32 c = tcg_temp_new_i32();
+    TCGv_i32 v = tcg_temp_new_i32();
+    TCGv_i32 tmp = tcg_temp_new_i32();
+
+    a64_extract_raw_flags_bit(n, 15);
+    a64_extract_raw_flags_bit(z, 14);
+    a64_raw_flags_get_c(c);
+    a64_extract_raw_flags_bit(v, 0);
+
+    switch (cc) {
+    case 0: /* eq */
+        tcg_gen_mov_i32(dst, z);
+        break;
+    case 1: /* ne */
+        tcg_gen_xori_i32(dst, z, 1);
+        break;
+    case 2: /* cs */
+        tcg_gen_mov_i32(dst, c);
+        break;
+    case 3: /* cc */
+        tcg_gen_xori_i32(dst, c, 1);
+        break;
+    case 4: /* mi */
+        tcg_gen_mov_i32(dst, n);
+        break;
+    case 5: /* pl */
+        tcg_gen_xori_i32(dst, n, 1);
+        break;
+    case 6: /* vs */
+        tcg_gen_mov_i32(dst, v);
+        break;
+    case 7: /* vc */
+        tcg_gen_xori_i32(dst, v, 1);
+        break;
+    case 8: /* hi */
+        tcg_gen_xori_i32(tmp, z, 1);
+        tcg_gen_and_i32(dst, c, tmp);
+        break;
+    case 9: /* ls */
+        tcg_gen_xori_i32(dst, c, 1);
+        tcg_gen_or_i32(dst, dst, z);
+        break;
+    case 10: /* ge */
+        tcg_gen_xor_i32(dst, n, v);
+        tcg_gen_xori_i32(dst, dst, 1);
+        break;
+    case 11: /* lt */
+        tcg_gen_xor_i32(dst, n, v);
+        break;
+    case 12: /* gt */
+        tcg_gen_xor_i32(dst, n, v);
+        tcg_gen_xori_i32(dst, dst, 1);
+        tcg_gen_xori_i32(tmp, z, 1);
+        tcg_gen_and_i32(dst, dst, tmp);
+        break;
+    case 13: /* le */
+        tcg_gen_xor_i32(dst, n, v);
+        tcg_gen_or_i32(dst, dst, z);
+        break;
+    case 14: /* al */
+    case 15: /* nv, treated as always */
+        tcg_gen_movi_i32(dst, 1);
+        break;
+    default:
+        g_assert_not_reached();
+    }
 }
 
 static void a64_test_cc_status4(TCGv_i32 dst, int cc)
@@ -875,17 +1121,33 @@ static TCGv_i32 a64_test_cc_bool_i32(DisasContext *s, int cc)
         arm_test_cc(&c32, cc);
         tcg_gen_setcondi_i32(c32.cond, ret, c32.value, 0);
         return ret;
+    case A64_FLAGS_REP_RAW:
+        a64_test_cc_rawflags(ret, cc);
+        return ret;
     case A64_FLAGS_REP_STATUS4:
         a64_test_cc_status4(ret, cc);
         return ret;
     case A64_FLAGS_REP_UNKNOWN:
     default:
         {
+            TCGLabel *label_raw = gen_new_label();
+            TCGLabel *label_status4 = gen_new_label();
             TCGLabel *label_fallback = gen_new_label();
             TCGLabel *label_done = gen_new_label();
 
             tcg_gen_brcondi_i32(TCG_COND_EQ, cpu_x86_flags_valid,
                                 A64_X86_FLAGS_INVALID, label_fallback);
+            tcg_gen_brcondi_i32(TCG_COND_EQ, cpu_x86_flags_valid,
+                                A64_X86_FLAGS_RAW, label_raw);
+            tcg_gen_brcondi_i32(TCG_COND_EQ, cpu_x86_flags_valid,
+                                A64_X86_FLAGS_STATUS4, label_status4);
+            tcg_gen_br(label_fallback);
+
+            gen_set_label(label_raw);
+            a64_test_cc_rawflags(ret, cc);
+            tcg_gen_br(label_done);
+
+            gen_set_label(label_status4);
             a64_test_cc_status4(ret, cc);
             tcg_gen_br(label_done);
 
@@ -1067,19 +1329,19 @@ static void a64_emit_x86_cmp_jcc_i32(int jcc, TCGv_i32 lhs,
     a64_add_label_use(label, op);
 }
 
-static void a64_emit_x86_save_cmp_status4(DisasContext *s)
+static void a64_emit_x86_capture_cmp_rawflags(DisasContext *s)
 {
     TCGv_i32 scratch = tcg_temp_new_i32();
     TCGv_i32 tmp = tcg_temp_new_i32();
-    TCGOp *op = tcg_emit_op(INDEX_op_x86_a64_save_cmp_flags, 3);
+    TCGOp *op = tcg_emit_op(INDEX_op_x86_a64_capture_cmp_rawflags, 3);
 
     TCGOP_TYPE(op) = TCG_TYPE_I32;
     tcg_set_insn_param(op, 0, tcgv_i32_arg(scratch));
-    tcg_set_insn_param(op, 1, tcgv_i32_arg(cpu_x86_status4));
+    tcg_set_insn_param(op, 1, tcgv_i32_arg(cpu_x86_raw_flags));
     tcg_set_insn_param(op, 2, tcgv_i32_arg(tmp));
 
-    tcg_gen_movi_i32(cpu_x86_flags_valid, A64_X86_FLAGS_STATUS4);
-    a64_note_flags_status4(s);
+    tcg_gen_movi_i32(cpu_x86_flags_valid, A64_X86_FLAGS_RAW);
+    a64_note_flags_raw(s);
 }
 
 static bool a64_try_emit_x86_cmp_bcond(DisasContext *s, int cc,
@@ -1090,14 +1352,17 @@ static bool a64_try_emit_x86_cmp_bcond(DisasContext *s, int cc,
     bool use_tcg_cond = a64_cmp_cond_to_tcg(&cond, cc);
     bool use_x86_jcc = a64_cmp_cond_to_x86_jcc(&jcc, cc);
 
-    if (!s->a64_cmp_pending_valid || !s->a64_cmp_pending_rewind ||
-        !a64_cmp_pending_is_adjacent_to_curr_insn(s) ||
+    if (!s->a64_cmp_pending_valid ||
+        (s->a64_cmp_pending_rewind != NULL &&
+         !a64_cmp_pending_is_adjacent_to_curr_insn(s)) ||
         (!use_tcg_cond && !use_x86_jcc)) {
         return false;
     }
 
-    a64_try_rewind_adjacent_cmp(s, use_tcg_cond ? "B.cond-x86-tcg"
-                                                : "B.cond-x86-jcc");
+    if (s->a64_cmp_pending_rewind) {
+        a64_try_rewind_adjacent_cmp(s, use_tcg_cond ? "B.cond-x86-tcg"
+                                                    : "B.cond-x86-jcc");
+    }
     reset_btype(s);
     a64_cmp_note_consume(s, use_tcg_cond ? "B.cond-x86-tcg"
                                          : "B.cond-x86-jcc");
@@ -1123,10 +1388,10 @@ static bool a64_try_emit_x86_cmp_bcond(DisasContext *s, int cc,
         }
     }
 
-    a64_emit_x86_save_cmp_status4(s);
+    a64_emit_x86_capture_cmp_rawflags(s);
     gen_goto_tb(s, 0, 4);
     set_disas_label(s, match);
-    a64_emit_x86_save_cmp_status4(s);
+    a64_emit_x86_capture_cmp_rawflags(s);
     gen_goto_tb(s, 1, imm);
     return true;
 }
@@ -1655,7 +1920,7 @@ static inline void gen_set_NZ64(TCGv_i64 result)
 /* Set NZCV as for a logical operation: NZ as per result, CV cleared. */
 static inline void gen_logic_CC(DisasContext *s, int sf, TCGv_i64 result)
 {
-    a64_invalidate_x86_flags();
+    a64_invalidate_x86_flags(s);
     a64_note_flags_split(s);
 
     if (sf) {
@@ -1711,7 +1976,7 @@ static void gen_add32_CC(TCGv_i64 dest, TCGv_i64 t0, TCGv_i64 t1)
 static void gen_add_CC(DisasContext *s, int sf, TCGv_i64 dest,
                        TCGv_i64 t0, TCGv_i64 t1)
 {
-    a64_invalidate_x86_flags();
+    a64_invalidate_x86_flags(s);
     a64_note_flags_split(s);
 
     if (sf) {
@@ -1766,7 +2031,7 @@ static void gen_sub32_CC(TCGv_i64 dest, TCGv_i64 t0, TCGv_i64 t1)
 static void gen_sub_CC(DisasContext *s, int sf, TCGv_i64 dest,
                        TCGv_i64 t0, TCGv_i64 t1)
 {
-    a64_invalidate_x86_flags();
+    a64_invalidate_x86_flags(s);
     a64_note_flags_split(s);
 
     if (sf) {
@@ -1793,7 +2058,7 @@ static void gen_adc(int sf, TCGv_i64 dest, TCGv_i64 t0, TCGv_i64 t1)
 static void gen_adc_CC(DisasContext *s, int sf, TCGv_i64 dest,
                        TCGv_i64 t0, TCGv_i64 t1)
 {
-    a64_invalidate_x86_flags();
+    a64_invalidate_x86_flags(s);
     a64_note_flags_split(s);
 
     if (sf) {
@@ -2995,7 +3260,7 @@ static bool trans_XAFLAG(DisasContext *s, arg_XAFLAG *a)
     }
 
     a64_ensure_split_flags(s);
-    a64_invalidate_x86_flags();
+    a64_invalidate_x86_flags(s);
     a64_note_flags_split(s);
     z = tcg_temp_new_i32();
 
@@ -3032,7 +3297,7 @@ static bool trans_AXFLAG(DisasContext *s, arg_AXFLAG *a)
     }
 
     a64_ensure_split_flags(s);
-    a64_invalidate_x86_flags();
+    a64_invalidate_x86_flags(s);
     a64_note_flags_split(s);
     tcg_gen_sari_i32(cpu_VF, cpu_VF, 31);         /* V ? -1 : 0 */
     tcg_gen_andc_i32(cpu_CF, cpu_CF, cpu_VF);     /* C & !V */
@@ -3227,6 +3492,26 @@ static void gen_get_nzcv_status4(TCGv_i32 nzcv)
     tcg_gen_or_i32(nzcv, nzcv, tmp);
 }
 
+static void gen_get_nzcv_raw(TCGv_i32 nzcv)
+{
+    TCGv_i32 tmp = tcg_temp_new_i32();
+    TCGv_i32 c = tcg_temp_new_i32();
+
+    tcg_gen_andi_i32(nzcv, cpu_x86_raw_flags, 0x8000);
+    tcg_gen_shli_i32(nzcv, nzcv, 16);
+
+    tcg_gen_andi_i32(tmp, cpu_x86_raw_flags, 0x4000);
+    tcg_gen_shli_i32(tmp, tmp, 16);
+    tcg_gen_or_i32(nzcv, nzcv, tmp);
+
+    a64_raw_flags_get_c(c);
+    tcg_gen_deposit_i32(nzcv, nzcv, c, 29, 1);
+
+    tcg_gen_andi_i32(tmp, cpu_x86_raw_flags, 1);
+    tcg_gen_shli_i32(tmp, tmp, 28);
+    tcg_gen_or_i32(nzcv, nzcv, tmp);
+}
+
 static void gen_get_nzcv(DisasContext *s, TCGv_i64 tcg_rt)
 {
     TCGv_i32 nzcv = tcg_temp_new_i32();
@@ -3235,17 +3520,33 @@ static void gen_get_nzcv(DisasContext *s, TCGv_i64 tcg_rt)
     case A64_FLAGS_REP_STATUS4:
         gen_get_nzcv_status4(nzcv);
         break;
+    case A64_FLAGS_REP_RAW:
+        gen_get_nzcv_raw(nzcv);
+        break;
     case A64_FLAGS_REP_SPLIT:
         gen_get_nzcv_split(nzcv);
         break;
     case A64_FLAGS_REP_UNKNOWN:
     default:
         {
+            TCGLabel *label_raw = gen_new_label();
+            TCGLabel *label_status4 = gen_new_label();
             TCGLabel *label_split = gen_new_label();
             TCGLabel *label_done = gen_new_label();
 
             tcg_gen_brcondi_i32(TCG_COND_EQ, cpu_x86_flags_valid,
                                 A64_X86_FLAGS_INVALID, label_split);
+            tcg_gen_brcondi_i32(TCG_COND_EQ, cpu_x86_flags_valid,
+                                A64_X86_FLAGS_RAW, label_raw);
+            tcg_gen_brcondi_i32(TCG_COND_EQ, cpu_x86_flags_valid,
+                                A64_X86_FLAGS_STATUS4, label_status4);
+            tcg_gen_br(label_split);
+
+            gen_set_label(label_raw);
+            gen_get_nzcv_raw(nzcv);
+            tcg_gen_br(label_done);
+
+            gen_set_label(label_status4);
             gen_get_nzcv_status4(nzcv);
             tcg_gen_br(label_done);
 
@@ -3263,7 +3564,7 @@ static void gen_set_nzcv(DisasContext *s, TCGv_i64 tcg_rt)
 {
     TCGv_i32 nzcv = tcg_temp_new_i32();
 
-    a64_invalidate_x86_flags();
+    a64_invalidate_x86_flags(s);
     a64_note_flags_split(s);
 
     /* take NZCV from R[t] */
@@ -5711,12 +6012,18 @@ static bool gen_rri(DisasContext *s, arg_rri_sf *a,
 static bool do_addsub_imm(DisasContext *s, arg_rri_sf *a,
                           bool sub_op, bool setflags)
 {
-    TCGOp *cmp_rewind = NULL;
+    bool lazy_bcond_cmp = false;
+    uint8_t gap_insns = 0;
     TCGv_i64 tcg_rn = read_cpu_reg_sp(s, a->rn, a->sf);
     TCGv_i64 tcg_imm = tcg_constant_i64(a->imm);
-    TCGv_i64 tcg_rd = setflags ? cpu_reg(s, a->rd) : cpu_reg_sp(s, a->rd);
+    TCGv_i64 tcg_rd = NULL;
+
+    if (setflags && sub_op && a->rd == 31) {
+        lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns);
+    }
 
     if (!setflags) {
+        tcg_rd = cpu_reg_sp(s, a->rd);
         if (sub_op) {
             tcg_gen_sub_i64(tcg_rd, tcg_rn, tcg_imm);
         } else {
@@ -5724,24 +6031,27 @@ static bool do_addsub_imm(DisasContext *s, arg_rri_sf *a,
         }
     } else {
         if (sub_op) {
-            if (a->rd == 31) {
-                cmp_rewind = tcg_last_op();
+            if (!lazy_bcond_cmp) {
+                tcg_rd = cpu_reg(s, a->rd);
+                gen_sub_CC(s, a->sf, tcg_rd, tcg_rn, tcg_imm);
             }
-            gen_sub_CC(s, a->sf, tcg_rd, tcg_rn, tcg_imm);
         } else {
+            tcg_rd = cpu_reg(s, a->rd);
             gen_add_CC(s, a->sf, tcg_rd, tcg_rn, tcg_imm);
         }
     }
 
-    if (!a->sf) {
+    if (!a->sf && tcg_rd != NULL) {
         tcg_gen_ext32u_i64(tcg_rd, tcg_rd);
     }
 
-    if (setflags && sub_op && a->rd == 31) {
-        a64_record_cmp_for_bcond(s, a->sf, tcg_rn, tcg_imm, cmp_rewind,
+    if (lazy_bcond_cmp) {
+        a64_record_cmp_for_bcond(s, a->sf, tcg_rn, tcg_imm,
+                                 NULL,
                                  tcg_last_op(),
                                  a->sf ? A64_X86_CC_SUB64
-                                       : A64_X86_CC_SUB32);
+                                       : A64_X86_CC_SUB32,
+                                 gap_insns);
     }
     return true;
 }
@@ -9670,17 +9980,22 @@ TRANS(EOR_r, do_logic_reg, a, tcg_gen_xor_i64, tcg_gen_eqv_i64, false)
 static bool do_addsub_ext(DisasContext *s, arg_addsub_ext *a,
                           bool sub_op, bool setflags)
 {
-    TCGOp *cmp_rewind = NULL;
-    TCGv_i64 tcg_rm, tcg_rn, tcg_rd, tcg_result;
+    bool lazy_bcond_cmp = false;
+    uint8_t gap_insns = 0;
+    TCGv_i64 tcg_rm, tcg_rn, tcg_rd = NULL, tcg_result;
 
     if (a->sa > 4) {
         return false;
     }
 
+    if (setflags && sub_op && a->rd == 31) {
+        lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns);
+    }
+
     /* non-flag setting ops may use SP */
     if (!setflags) {
         tcg_rd = cpu_reg_sp(s, a->rd);
-    } else {
+    } else if (!lazy_bcond_cmp) {
         tcg_rd = cpu_reg(s, a->rd);
     }
     tcg_rn = read_cpu_reg_sp(s, a->rn, a->sf);
@@ -9697,26 +10012,29 @@ static bool do_addsub_ext(DisasContext *s, arg_addsub_ext *a,
         }
     } else {
         if (sub_op) {
-            if (a->rd == 31) {
-                cmp_rewind = tcg_last_op();
+            if (!lazy_bcond_cmp) {
+                gen_sub_CC(s, a->sf, tcg_result, tcg_rn, tcg_rm);
             }
-            gen_sub_CC(s, a->sf, tcg_result, tcg_rn, tcg_rm);
         } else {
             gen_add_CC(s, a->sf, tcg_result, tcg_rn, tcg_rm);
         }
     }
 
-    if (a->sf) {
-        tcg_gen_mov_i64(tcg_rd, tcg_result);
-    } else {
-        tcg_gen_ext32u_i64(tcg_rd, tcg_result);
+    if (!setflags || !lazy_bcond_cmp) {
+        if (a->sf) {
+            tcg_gen_mov_i64(tcg_rd, tcg_result);
+        } else {
+            tcg_gen_ext32u_i64(tcg_rd, tcg_result);
+        }
     }
 
-    if (setflags && sub_op && a->rd == 31) {
-        a64_record_cmp_for_bcond(s, a->sf, tcg_rn, tcg_rm, cmp_rewind,
+    if (lazy_bcond_cmp) {
+        a64_record_cmp_for_bcond(s, a->sf, tcg_rn, tcg_rm,
+                                 NULL,
                                  tcg_last_op(),
                                  a->sf ? A64_X86_CC_SUB64
-                                       : A64_X86_CC_SUB32);
+                                       : A64_X86_CC_SUB32,
+                                 gap_insns);
     }
     return true;
 }
@@ -9729,14 +10047,21 @@ TRANS(SUBS_ext, do_addsub_ext, a, true, true)
 static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
                           bool sub_op, bool setflags)
 {
-    TCGOp *cmp_rewind = NULL;
-    TCGv_i64 tcg_rd, tcg_rn, tcg_rm, tcg_result;
+    bool lazy_bcond_cmp = false;
+    uint8_t gap_insns = 0;
+    TCGv_i64 tcg_rd = NULL, tcg_rn, tcg_rm, tcg_result;
 
     if (a->st == 3 || (!a->sf && (a->sa & 32))) {
         return false;
     }
 
-    tcg_rd = cpu_reg(s, a->rd);
+    if (setflags && sub_op && a->rd == 31) {
+        lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns);
+    }
+
+    if (!setflags || !lazy_bcond_cmp) {
+        tcg_rd = cpu_reg(s, a->rd);
+    }
     tcg_rn = read_cpu_reg(s, a->rn, a->sf);
     tcg_rm = read_cpu_reg(s, a->rm, a->sf);
 
@@ -9751,26 +10076,29 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
         }
     } else {
         if (sub_op) {
-            if (a->rd == 31) {
-                cmp_rewind = tcg_last_op();
+            if (!lazy_bcond_cmp) {
+                gen_sub_CC(s, a->sf, tcg_result, tcg_rn, tcg_rm);
             }
-            gen_sub_CC(s, a->sf, tcg_result, tcg_rn, tcg_rm);
         } else {
             gen_add_CC(s, a->sf, tcg_result, tcg_rn, tcg_rm);
         }
     }
 
-    if (a->sf) {
-        tcg_gen_mov_i64(tcg_rd, tcg_result);
-    } else {
-        tcg_gen_ext32u_i64(tcg_rd, tcg_result);
+    if (!setflags || !lazy_bcond_cmp) {
+        if (a->sf) {
+            tcg_gen_mov_i64(tcg_rd, tcg_result);
+        } else {
+            tcg_gen_ext32u_i64(tcg_rd, tcg_result);
+        }
     }
 
-    if (setflags && sub_op && a->rd == 31) {
-        a64_record_cmp_for_bcond(s, a->sf, tcg_rn, tcg_rm, cmp_rewind,
+    if (lazy_bcond_cmp) {
+        a64_record_cmp_for_bcond(s, a->sf, tcg_rn, tcg_rm,
+                                 NULL,
                                  tcg_last_op(),
                                  a->sf ? A64_X86_CC_SUB64
-                                       : A64_X86_CC_SUB32);
+                                       : A64_X86_CC_SUB32,
+                                 gap_insns);
     }
     return true;
 }
@@ -9847,7 +10175,7 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
 {
     TCGv_i64 tcg_y, tcg_rn, tcg_rd;
 
-    a64_ensure_carry_flag();
+    a64_ensure_carry_flag(s);
 
     tcg_rd = cpu_reg(s, a->rd);
     tcg_rn = cpu_reg(s, a->rn);
@@ -9886,7 +10214,7 @@ static bool trans_RMIF(DisasContext *s, arg_RMIF *a)
         /* Preserve any flag bits that this RMIF instance does not overwrite. */
         a64_ensure_split_flags(s);
     } else {
-        a64_invalidate_x86_flags();
+        a64_invalidate_x86_flags(s);
         a64_note_flags_split(s);
     }
     tcg_rn = read_cpu_reg(s, a->rn, 1);
@@ -9919,8 +10247,8 @@ static bool do_setf(DisasContext *s, int rn, int shift)
      * SETF{8,16} preserves C while replacing NZV, so only materialize carry
      * from canonical compare state when needed.
      */
-    a64_ensure_carry_flag();
-    a64_invalidate_x86_flags();
+    a64_ensure_carry_flag(s);
+    a64_invalidate_x86_flags(s);
     a64_note_flags_split(s);
     tcg_gen_extrl_i64_i32(tmp, cpu_reg(s, rn));
     tcg_gen_shli_i32(cpu_NF, tmp, shift);
@@ -10668,7 +10996,7 @@ static bool trans_FJCVTZS(DisasContext *s, arg_FJCVTZS *a)
         gen_helper_fjcvtzs(t, t, fpstatus);
 
         tcg_gen_ext32u_i64(cpu_reg(s, a->rd), t);
-        a64_invalidate_x86_flags();
+        a64_invalidate_x86_flags(s);
         a64_note_flags_split(s);
         tcg_gen_extrh_i64_i32(cpu_ZF, t);
         tcg_gen_movi_i32(cpu_CF, 0);
@@ -11487,6 +11815,7 @@ static void aarch64_tr_init_disas_context(DisasContextBase *dcbase,
     CPUARMTBFlags tb_flags = arm_tbflags_from_tb(dc->base.tb);
     int bound, core_mmu_idx;
 
+    dc->env = env;
     dc->isar = &arm_cpu->isar;
     dc->condjmp = 0;
     dc->pc_save = dc->base.pc_first;
@@ -11559,6 +11888,7 @@ static void aarch64_tr_init_disas_context(DisasContextBase *dcbase,
     dc->a64_cmp_pending_consumed = false;
     dc->a64_cmp_pending_consumer = NULL;
     dc->a64_cmp_pending_cc_op = A64_X86_CC_INVALID;
+    dc->a64_cmp_pending_gap_insns = 0;
     dc->a64_cmp_stat_records = 0;
     dc->a64_cmp_stat_consumes = 0;
     dc->a64_cmp_stat_rewinds = 0;
@@ -11713,6 +12043,12 @@ static void aarch64_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
         unallocated_encoding(s);
     }
 
+    if (!s->a64_cmp_pending_keep && s->a64_cmp_pending_valid &&
+        s->a64_cmp_pending_gap_insns > 0) {
+        s->a64_cmp_pending_gap_insns--;
+        s->a64_cmp_pending_keep = true;
+    }
+
     if (!s->a64_cmp_pending_keep) {
         a64_cmp_note_drop(s);
         s->a64_cmp_pending_valid = false;
@@ -11725,6 +12061,7 @@ static void aarch64_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
         s->a64_cmp_pending_consumed = false;
         s->a64_cmp_pending_consumer = NULL;
         s->a64_cmp_pending_cc_op = A64_X86_CC_INVALID;
+        s->a64_cmp_pending_gap_insns = 0;
     }
 
     /*

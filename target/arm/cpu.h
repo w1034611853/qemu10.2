@@ -273,6 +273,7 @@ typedef enum A64X86CCOp {
 typedef enum A64X86FlagsKind {
     A64_X86_FLAGS_INVALID = 0,
     A64_X86_FLAGS_STATUS4,
+    A64_X86_FLAGS_RAW,
 } A64X86FlagsKind;
 
 typedef struct CPUArchState {
@@ -329,9 +330,11 @@ typedef struct CPUArchState {
     /*
      * Canonicalized A64 flags cache for the x86 compare fast path.
      * When x86_flags_valid == A64_X86_FLAGS_STATUS4, x86_status4 packs
-     * N/Z/C/V into bits [3:0].
+     * N/Z/C/V into bits [3:0]. When x86_flags_valid == A64_X86_FLAGS_RAW,
+     * x86_raw_flags stores x86 LAHF output in AH plus OF in AL bit 0.
      */
     uint32_t x86_status4;
+    uint32_t x86_raw_flags;
     uint32_t x86_cc_op;
     uint32_t x86_flags_valid;
     uint32_t QF; /* 0 or 1 */
