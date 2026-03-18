@@ -36,6 +36,12 @@ typedef struct DisasDelayException {
     uint32_t target_el;
 } DisasDelayException;
 
+typedef enum A64FlagsRep {
+    A64_FLAGS_REP_UNKNOWN = 0,
+    A64_FLAGS_REP_SPLIT,
+    A64_FLAGS_REP_STATUS4,
+} A64FlagsRep;
+
 typedef struct DisasContext {
     DisasContextBase base;
     const ARMISARegisters *isar;
@@ -197,6 +203,8 @@ typedef struct DisasContext {
     uint8_t dcz_blocksize;
     /* A copy of cpu->gm_blocksize. */
     uint8_t gm_blocksize;
+    /* Translation-time view of how the current TB represents NZCV. */
+    uint8_t a64_flags_rep;
     /* True if the current insn_start has been updated. */
     bool insn_start_updated;
     /* Offset from VNCR_EL2 when FEAT_NV2 redirects this reg to memory */

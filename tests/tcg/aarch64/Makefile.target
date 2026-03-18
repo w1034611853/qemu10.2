@@ -48,6 +48,13 @@ run-nzcv-status4: nzcv-status4
 	$(call diff-out,$<,$(AARCH64_SRC)/nzcv-status4.out)
 endif
 
+AARCH64_TESTS += cmpstress-o3
+cmpstress-o3: CFLAGS += -O3
+run-cmpstress-o3: QEMU_OPTS += -cpu max
+run-cmpstress-o3: cmpstress-o3
+	$(call run-test,$<,$(QEMU) $(QEMU_OPTS) $<)
+	$(call diff-out,$<,$(AARCH64_SRC)/cmpstress-o3.out)
+
 # Pauth Tests
 ifneq ($(CROSS_CC_HAS_ARMV8_3),)
 AARCH64_TESTS += pauth-1 pauth-2 pauth-4 pauth-5 test-2375

@@ -935,6 +935,164 @@ t61_ok:
     b       fail
 t62_ok:
 
+    /* 0x63: Adjacent CMP -> CSEL -> ADC preserves carry and NZCV */
+    mov     x3, #11
+    mov     x4, #22
+    mov     x5, #10
+    mov     x6, #20
+    mov     x0, #5
+    cmp     x0, #3
+    csel    x2, x3, x4, eq
+    adc     x7, x5, x6
+    expect_nzcv 0x2, 0x63
+    expect_reg_imm x2, 22, 0x63
+    expect_reg_imm x7, 31, 0x63
+
+    /* 0x64: Adjacent CMP -> CSEL -> CFINV consumes canonical carry only */
+    mov     x3, #11
+    mov     x4, #22
+    mov     x0, #5
+    cmp     x0, #3
+    csel    x2, x3, x4, cs
+    cfinv
+    expect_nzcv 0x0, 0x64
+    expect_reg_imm x2, 11, 0x64
+
+    /* 0x65: Adjacent CMP -> FCSEL -> ADC preserves flags */
+    fmov    d2, #2.0
+    fmov    d3, #0.5
+    mov     x5, #10
+    mov     x6, #20
+    mov     x0, #9
+    cmp     x0, #9
+    fcsel   d4, d2, d3, eq
+    adc     x7, x5, x6
+    expect_nzcv 0x6, 0x65
+    expect_reg_imm x7, 31, 0x65
+    fmov    x8, d4
+    ldr     x9, =0x4000000000000000
+    mov     x20, #0x65
+    cmp     x8, x9
+    b.eq    1f
+    b       fail
+1:
+
+    /* 0x66: Adjacent 32-bit CMP -> CSEL -> ADC preserves 32-bit carry */
+    mov     x3, #11
+    mov     x4, #22
+    mov     x5, #10
+    mov     x6, #20
+    mov     w0, #5
+    mov     w1, #3
+    cmp     w0, w1
+    csel    x2, x3, x4, cs
+    adc     x7, x5, x6
+    expect_nzcv 0x2, 0x66
+    expect_reg_imm x2, 11, 0x66
+    expect_reg_imm x7, 31, 0x66
+
+    /* 0x67: Adjacent CMP -> CSEL -> B.eq preserves condition flags */
+    mov     x3, #55
+    mov     x4, #66
+    mov     x0, #7
+    cmp     x0, #7
+    csel    x2, x3, x4, eq
+    b.eq    t67_ok
+    mov     x20, #0x67
+    b       fail
+t67_ok:
+    expect_reg_imm x2, 55, 0x67
+
+    /* 0x68: CMP -> RMIF(mask=C) preserves canonical N/Z/V */
+    mov     x0, #0
+    cmp     x0, #1
+    mov     x0, #0x2
+    rmif    x0, #0, #0x2
+    expect_nzcv 0xa, 0x68
+
+    /* 0x69: CMP -> RMIF(mask=NZV) preserves canonical C */
+    mov     x0, #5
+    cmp     x0, #3
+    mov     x0, #0x9
+    rmif    x0, #0, #0xd
+    expect_nzcv 0xb, 0x69
+
+    /* 0x6a: CMP -> SETF8 preserves canonical carry=1 */
+    mov     x0, #5
+    cmp     x0, #3
+    mov     w0, #0x80
+    setf8   w0
+    expect_nzcv 0xb, 0x6a
+
+    /* 0x6b: CMP -> SETF16 preserves canonical carry=1 */
+    mov     x0, #5
+    cmp     x0, #3
+    mov     w0, #0x8000
+    setf16  w0
+    expect_nzcv 0xb, 0x6b
+
+    /* 0x6c: CMP -> CFINV preserves canonical N/Z/V while flipping C */
+    mov     x0, #0
+    cmp     x0, #1
+    cfinv
+    expect_nzcv 0xa, 0x6c
+
+    /* 0x6d: Adjacent CMP -> CSET -> ADC preserves carry */
+    mov     x5, #10
+    mov     x6, #20
+    mov     x0, #7
+    cmp     x0, #7
+    cset    x2, eq
+    adc     x7, x5, x6
+    expect_nzcv 0x6, 0x6d
+    expect_reg_imm x2, 1, 0x6d
+    expect_reg_imm x7, 31, 0x6d
+
+    /* 0x6e: Adjacent CMP -> CSETM -> ADC preserves carry */
+    mov     x5, #10
+    mov     x6, #20
+    mov     x0, #5
+    cmp     x0, #3
+    csetm   x2, ne
+    adc     x7, x5, x6
+    movn    x8, #0
+    expect_nzcv 0x2, 0x6e
+    expect_reg_reg x2, x8, 0x6e
+    expect_reg_imm x7, 31, 0x6e
+
+    /* 0x6f: Adjacent CMP -> CSINC -> ADC preserves carry */
+    mov     x3, #100
+    mov     x4, #55
+    mov     x5, #10
+    mov     x6, #20
+    mov     x0, #7
+    cmp     x0, #6
+    csinc   x2, x3, x4, eq
+    adc     x7, x5, x6
+    expect_nzcv 0x2, 0x6f
+    expect_reg_imm x2, 56, 0x6f
+    expect_reg_imm x7, 31, 0x6f
+
+    /* 0x70: Adjacent CMP -> CSINV -> flags remain live */
+    mov     x3, #100
+    mov     x4, #55
+    mov     x0, #7
+    cmp     x0, #6
+    csinv   x2, x3, x4, eq
+    mvn     x8, x4
+    expect_nzcv 0x2, 0x70
+    expect_reg_reg x2, x8, 0x70
+
+    /* 0x71: Adjacent CMP -> CSNEG -> flags remain live */
+    mov     x3, #100
+    mov     x4, #55
+    mov     x0, #0
+    cmp     x0, #1
+    csneg   x2, x3, x4, eq
+    neg     x8, x4
+    expect_nzcv 0x8, 0x71
+    expect_reg_reg x2, x8, 0x71
+
     b       after_shared_consumers
 
 shared_nzcv_consumer:

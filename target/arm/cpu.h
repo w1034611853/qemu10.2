@@ -270,6 +270,11 @@ typedef enum A64X86CCOp {
     A64_X86_CC_SBC64,
 } A64X86CCOp;
 
+typedef enum A64X86FlagsKind {
+    A64_X86_FLAGS_INVALID = 0,
+    A64_X86_FLAGS_STATUS4,
+} A64X86FlagsKind;
+
 typedef struct CPUArchState {
     /* Regs for current mode.  */
     uint32_t regs[16];
@@ -323,7 +328,8 @@ typedef struct CPUArchState {
     uint32_t ZF; /* Z set if zero.  */
     /*
      * Canonicalized A64 flags cache for the x86 compare fast path.
-     * x86_status4 packs SF/ZF/CF/OF into bits [3:0].
+     * When x86_flags_valid == A64_X86_FLAGS_STATUS4, x86_status4 packs
+     * N/Z/C/V into bits [3:0].
      */
     uint32_t x86_status4;
     uint32_t x86_cc_op;

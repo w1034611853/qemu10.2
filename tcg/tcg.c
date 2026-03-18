@@ -858,6 +858,7 @@ static int tcg_out_pool_finalize(TCGContext *s)
 #define C_N1O1_I1(O1, O2, I1)           C_PFX3(c_n1o1_i1_, O1, O2, I1),
 #define C_N2_I1(O1, O2, I1)             C_PFX3(c_n2_i1_, O1, O2, I1),
 
+#define C_O3_I0(O1, O2, O3)             C_PFX3(c_o3_i0_, O1, O2, O3),
 #define C_O6_I0(O1, O2, O3, O4, O5, O6) C_PFX6(c_o6_i0_, O1, O2, O3, O4, O5, O6),
 #define C_O2_I1(O1, O2, I1)             C_PFX3(c_o2_i1_, O1, O2, I1),
 #define C_O2_I2(O1, O2, I1, I2)         C_PFX4(c_o2_i2_, O1, O2, I1, I2),
@@ -884,6 +885,7 @@ static TCGConstraintSetIndex tcg_target_op_def(TCGOpcode, TCGType, unsigned);
 #undef C_N1_I2
 #undef C_N1O1_I1
 #undef C_N2_I1
+#undef C_O3_I0
 #undef C_O6_I0
 #undef C_O2_I1
 #undef C_O2_I2
@@ -912,6 +914,7 @@ typedef struct TCGConstraintSet {
 #define C_N1O1_I1(O1, O2, I1)           { 2, 1, { "&" #O1, #O2, #I1 } },
 #define C_N2_I1(O1, O2, I1)             { 2, 1, { "&" #O1, "&" #O2, #I1 } },
 
+#define C_O3_I0(O1, O2, O3)             { 3, 0, { #O1, #O2, #O3 } },
 #define C_O6_I0(O1, O2, O3, O4, O5, O6) { 6, 0, { #O1, #O2, #O3, #O4, #O5, #O6 } },
 #define C_O2_I1(O1, O2, I1)             { 2, 1, { #O1, #O2, #I1 } },
 #define C_O2_I2(O1, O2, I1, I2)         { 2, 2, { #O1, #O2, #I1, #I2 } },
@@ -934,6 +937,7 @@ static const TCGConstraintSet constraint_sets[] = {
 #undef C_N1_I2
 #undef C_N1O1_I1
 #undef C_N2_I1
+#undef C_O3_I0
 #undef C_O6_I0
 #undef C_O2_I1
 #undef C_O2_I2
@@ -957,6 +961,7 @@ static const TCGConstraintSet constraint_sets[] = {
 #define C_N1O1_I1(O1, O2, I1)           C_PFX3(c_n1o1_i1_, O1, O2, I1)
 #define C_N2_I1(O1, O2, I1)             C_PFX3(c_n2_i1_, O1, O2, I1)
 
+#define C_O3_I0(O1, O2, O3)             C_PFX3(c_o3_i0_, O1, O2, O3)
 #define C_O6_I0(O1, O2, O3, O4, O5, O6) C_PFX6(c_o6_i0_, O1, O2, O3, O4, O5, O6)
 #define C_O2_I1(O1, O2, I1)             C_PFX3(c_o2_i1_, O1, O2, I1)
 #define C_O2_I2(O1, O2, I1, I2)         C_PFX4(c_o2_i2_, O1, O2, I1, I2)
@@ -1032,8 +1037,7 @@ typedef struct TCGOutOpBrcond2 {
 
 typedef struct TCGOutOpX86A64SaveCmpFlags {
     TCGOutOp base;
-    void (*out)(TCGContext *s, TCGReg scratch, TCGReg status4,
-                TCGReg nf, TCGReg zf, TCGReg cf, TCGReg vf);
+    void (*out)(TCGContext *s, TCGReg scratch, TCGReg status4, TCGReg tmp);
 } TCGOutOpX86A64SaveCmpFlags;
 
 typedef struct TCGOutOpBswap {
@@ -5939,11 +5943,7 @@ static void tcg_reg_alloc_op(TCGContext *s, const TCGOp *op)
             tcg_debug_assert(!const_args[0]);
             tcg_debug_assert(!const_args[1]);
             tcg_debug_assert(!const_args[2]);
-            tcg_debug_assert(!const_args[3]);
-            tcg_debug_assert(!const_args[4]);
-            tcg_debug_assert(!const_args[5]);
-            out->out(s, new_args[0], new_args[1], new_args[2],
-                     new_args[3], new_args[4], new_args[5]);
+            out->out(s, new_args[0], new_args[1], new_args[2]);
         }
         break;
 #endif

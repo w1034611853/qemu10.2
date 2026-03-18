@@ -1710,8 +1710,7 @@ static const TCGOutOpX86CmpJcc outop_x86_cmp_jcc = {
 };
 
 static void tgen_x86_a64_save_cmp_flags(TCGContext *s, TCGReg scratch,
-                                        TCGReg status4, TCGReg nf,
-                                        TCGReg zf, TCGReg cf, TCGReg vf)
+                                        TCGReg status4, TCGReg tmp)
 {
     tcg_debug_assert(scratch == TCG_REG_EAX);
 
@@ -1719,44 +1718,23 @@ static void tgen_x86_a64_save_cmp_flags(TCGContext *s, TCGReg scratch,
     tcg_out8(s, 0x9f); /* lahf */
     tcg_out_modrm(s, OPC_SETCC | JCC_JO, 0, scratch);
 
-    tcg_out_mov(s, TCG_TYPE_I32, nf, scratch);
-    tgen_arithi(s, ARITH_AND, nf, 0x8000, 0);
-    tcg_out_shifti(s, SHIFT_SHL, nf, 16);
+    tcg_out_mov(s, TCG_TYPE_I32, tmp, scratch);
+    tcg_out_shifti(s, SHIFT_SHR, tmp, 12);
+    tgen_arithi(s, ARITH_AND, tmp, 0xc, 0);
 
-    tcg_out_mov(s, TCG_TYPE_I32, zf, scratch);
-    tcg_out_shifti(s, SHIFT_SHR, zf, 14);
-    tgen_arithi(s, ARITH_AND, zf, 1, 0);
-    tgen_arithi(s, ARITH_XOR, zf, 1, 0);
+    tcg_out_mov(s, TCG_TYPE_I32, status4, scratch);
+    tcg_out_shifti(s, SHIFT_SHR, status4, 7);
+    tgen_arithi(s, ARITH_AND, status4, 0x2, 0);
+    tgen_arithi(s, ARITH_XOR, status4, 0x2, 0);
 
-    tcg_out_mov(s, TCG_TYPE_I32, cf, scratch);
-    tcg_out_shifti(s, SHIFT_SHR, cf, 8);
-    tgen_arithi(s, ARITH_AND, cf, 1, 0);
-    tgen_arithi(s, ARITH_XOR, cf, 1, 0);
+    tgen_arithr(s, ARITH_OR, status4, tmp);
 
-    tcg_out_mov(s, TCG_TYPE_I32, vf, scratch);
-    tgen_arithi(s, ARITH_AND, vf, 1, 0);
-    tcg_out_shifti(s, SHIFT_SHL, vf, 31);
-
-    tcg_out_mov(s, TCG_TYPE_I32, status4, vf);
-    tcg_out_shifti(s, SHIFT_SHR, status4, 31);
-
-    tcg_out_mov(s, TCG_TYPE_I32, scratch, nf);
-    tcg_out_shifti(s, SHIFT_SHR, scratch, 28);
-    tgen_arithr(s, ARITH_OR, status4, scratch);
-
-    tcg_out_mov(s, TCG_TYPE_I32, scratch, zf);
-    tgen_arithi(s, ARITH_XOR, scratch, 1, 0);
-    tcg_out_shifti(s, SHIFT_SHL, scratch, 2);
-    tgen_arithr(s, ARITH_OR, status4, scratch);
-
-    tcg_out_mov(s, TCG_TYPE_I32, scratch, cf);
-    tgen_arithi(s, ARITH_XOR, scratch, 1, 0);
-    tcg_out_shifti(s, SHIFT_SHL, scratch, 1);
+    tgen_arithi(s, ARITH_AND, scratch, 1, 0);
     tgen_arithr(s, ARITH_OR, status4, scratch);
 }
 
 static const TCGOutOpX86A64SaveCmpFlags outop_x86_a64_save_cmp_flags = {
-    .base.static_constraint = C_O6_I0(a, r, r, r, r, r),
+    .base.static_constraint = C_O3_I0(a, r, r),
     .out = tgen_x86_a64_save_cmp_flags,
 };
 
@@ -4311,7 +4289,7 @@ tcg_target_op_def(TCGOpcode op, TCGType type, unsigned flags)
         return C_O0_I2(r, reT);
 
     case INDEX_op_x86_a64_save_cmp_flags:
-        return C_O6_I0(a, r, r, r, r, r);
+        return C_O3_I0(a, r, r);
 
     case INDEX_op_bitsel_vec:
         return C_O1_I3(x, x, x, x);
