@@ -1675,6 +1675,65 @@ static const TCGOutOpBrcond outop_x86_cmp_brcond = {
     .out_ri = tgen_brcondi,
 };
 
+static void tcg_out_x86_capture_rawflags_to_env(TCGContext *s,
+                                                tcg_target_long raw_off,
+                                                bool preserve_rax)
+{
+    /* LAHF captures SF/ZF/CF in AH; SETO adds OF in AL without clobbering SF. */
+    if (preserve_rax) {
+        tcg_out_push(s, TCG_REG_EAX);
+    }
+    tcg_out8(s, 0x9f); /* lahf */
+    tcg_out_modrm(s, OPC_SETCC | JCC_JO, 0, TCG_REG_EAX);
+    tcg_out_st(s, TCG_TYPE_I32, TCG_REG_EAX, TCG_AREG0, raw_off);
+    if (preserve_rax) {
+        tcg_out_pop(s, TCG_REG_EAX);
+    }
+}
+
+static void tcg_out_cmp_capture_cond_jcc(TCGContext *s, int rexw, TCGCond cond,
+                                         TCGArg arg1, TCGArg arg2,
+                                         int const_arg2,
+                                         tcg_target_long raw_off,
+                                         TCGLabel *label, bool small)
+{
+    int jcc = tcg_out_cmp(s, cond, arg1, arg2, const_arg2, rexw);
+
+    tcg_out_x86_capture_rawflags_to_env(s, raw_off, false);
+    tcg_out_jxx(s, jcc, label, small);
+}
+
+static void tgen_x86_cmp_brcond_capture_rawflags(TCGContext *s, TCGType type,
+                                                 TCGCond cond, TCGReg arg1,
+                                                 TCGReg arg2,
+                                                 tcg_target_long raw_off,
+                                                 TCGLabel *label)
+{
+    int rexw = type == TCG_TYPE_I32 ? 0 : P_REXW;
+
+    tcg_out_cmp_capture_cond_jcc(s, rexw, cond, arg1, arg2,
+                                 false, raw_off, label, false);
+}
+
+static void tgen_x86_cmp_brcondi_capture_rawflags(TCGContext *s, TCGType type,
+                                                  TCGCond cond, TCGReg arg1,
+                                                  tcg_target_long arg2,
+                                                  tcg_target_long raw_off,
+                                                  TCGLabel *label)
+{
+    int rexw = type == TCG_TYPE_I32 ? 0 : P_REXW;
+
+    tcg_out_cmp_capture_cond_jcc(s, rexw, cond, arg1, arg2,
+                                 true, raw_off, label, false);
+}
+
+static const TCGOutOpX86CmpBrcondCaptureRaw
+outop_x86_cmp_brcond_capture_rawflags = {
+    .base.static_constraint = C_O0_I2(r, reT),
+    .out_rr = tgen_x86_cmp_brcond_capture_rawflags,
+    .out_ri = tgen_x86_cmp_brcondi_capture_rawflags,
+};
+
 static void tcg_out_cmp_jcc(TCGContext *s, int rexw, int jcc,
                             TCGArg arg1, TCGArg arg2, int const_arg2,
                             TCGLabel *label, bool small)
@@ -1709,21 +1768,142 @@ static const TCGOutOpX86CmpJcc outop_x86_cmp_jcc = {
     .out_ri = tgen_x86_cmp_jcci,
 };
 
-static void tgen_x86_a64_capture_cmp_rawflags(TCGContext *s, TCGReg scratch,
-                                              TCGReg rawflags, TCGReg tmp)
+static void tcg_out_cmp_capture_jcc(TCGContext *s, int rexw, int jcc,
+                                    TCGArg arg1, TCGArg arg2, int const_arg2,
+                                    tcg_target_long raw_off,
+                                    TCGLabel *label, bool small)
+{
+    if (!const_arg2) {
+        tgen_arithr(s, ARITH_CMP + rexw, arg1, arg2);
+    } else {
+        tcg_debug_assert(!rexw || arg2 == (int32_t)arg2);
+        tgen_arithi(s, ARITH_CMP + rexw, arg1, arg2, 0);
+    }
+
+    tcg_out_x86_capture_rawflags_to_env(s, raw_off, false);
+    tcg_out_jxx(s, jcc, label, small);
+}
+
+static void tgen_x86_cmp_jcc_capture_rawflags(TCGContext *s, TCGType type,
+                                              int jcc, TCGReg arg1,
+                                              TCGReg arg2,
+                                              tcg_target_long raw_off,
+                                              TCGLabel *label)
+{
+    int rexw = type == TCG_TYPE_I32 ? 0 : P_REXW;
+
+    tcg_out_cmp_capture_jcc(s, rexw, jcc, arg1, arg2,
+                            false, raw_off, label, false);
+}
+
+static void tgen_x86_cmp_jcci_capture_rawflags(TCGContext *s, TCGType type,
+                                               int jcc, TCGReg arg1,
+                                               tcg_target_long arg2,
+                                               tcg_target_long raw_off,
+                                               TCGLabel *label)
+{
+    int rexw = type == TCG_TYPE_I32 ? 0 : P_REXW;
+
+    tcg_out_cmp_capture_jcc(s, rexw, jcc, arg1, arg2,
+                            true, raw_off, label, false);
+}
+
+static const TCGOutOpX86CmpJccCaptureRaw
+outop_x86_cmp_jcc_capture_rawflags = {
+    .base.static_constraint = C_O0_I2(r, reT),
+    .out_rr = tgen_x86_cmp_jcc_capture_rawflags,
+    .out_ri = tgen_x86_cmp_jcci_capture_rawflags,
+};
+
+static void tgen_x86_and_capture_rawflags(TCGContext *s, TCGType type,
+                                          TCGReg rawflags, TCGReg dst,
+                                          TCGReg rhs)
+{
+    int rexw = type == TCG_TYPE_I32 ? 0 : P_REXW;
+
+    tcg_debug_assert(rawflags == TCG_REG_EAX);
+    tgen_arithr(s, ARITH_AND + rexw, dst, rhs);
+    tcg_out8(s, 0x9f); /* lahf */
+    tcg_out_modrm(s, OPC_SETCC | JCC_JO, 0, TCG_REG_EAX);
+}
+
+static void tgen_x86_andi_capture_rawflags(TCGContext *s, TCGType type,
+                                           TCGReg rawflags, TCGReg dst,
+                                           tcg_target_long rhs)
+{
+    int rexw = type == TCG_TYPE_I32 ? 0 : P_REXW;
+
+    tcg_debug_assert(rawflags == TCG_REG_EAX);
+    if (rexw) {
+        tcg_debug_assert(rhs == (int32_t)rhs);
+    }
+    if (rhs == (int8_t)rhs) {
+        tcg_out_modrm(s, OPC_ARITH_EvIb + rexw, ARITH_AND, dst);
+        tcg_out8(s, rhs);
+    } else {
+        tcg_out_modrm(s, OPC_ARITH_EvIz + rexw, ARITH_AND, dst);
+        tcg_out32(s, rhs);
+    }
+    tcg_out8(s, 0x9f); /* lahf */
+    tcg_out_modrm(s, OPC_SETCC | JCC_JO, 0, TCG_REG_EAX);
+}
+
+static const TCGOutOpX86AndCaptureRaw outop_x86_and_capture_rawflags = {
+    .base.static_constraint = C_O2_I2(a, r, 1, reZ),
+    .out_rrr = tgen_x86_and_capture_rawflags,
+    .out_rri = tgen_x86_andi_capture_rawflags,
+};
+
+static void tgen_x86_test_capture_rawflags(TCGContext *s, TCGType type,
+                                           TCGReg rawflags, TCGReg lhs,
+                                           TCGReg rhs)
+{
+    int rexw = type == TCG_TYPE_I32 ? 0 : P_REXW;
+
+    tcg_debug_assert(rawflags == TCG_REG_EAX);
+    tcg_out_modrm(s, OPC_TESTL + rexw, lhs, rhs);
+    tcg_out8(s, 0x9f); /* lahf */
+    tcg_out_modrm(s, OPC_SETCC | JCC_JO, 0, TCG_REG_EAX);
+}
+
+static void tgen_x86_testi_capture_rawflags(TCGContext *s, TCGType type,
+                                            TCGReg rawflags, TCGReg lhs,
+                                            tcg_target_long rhs)
+{
+    int rexw = type == TCG_TYPE_I32 ? 0 : P_REXW;
+
+    tcg_debug_assert(rawflags == TCG_REG_EAX);
+    if (rexw) {
+        tcg_debug_assert(rhs == (int32_t)rhs);
+    }
+    tcg_out_modrm(s, OPC_GRP3_Ev + rexw, EXT3_TESTi, lhs);
+    tcg_out32(s, rhs);
+    tcg_out8(s, 0x9f); /* lahf */
+    tcg_out_modrm(s, OPC_SETCC | JCC_JO, 0, TCG_REG_EAX);
+}
+
+static const TCGOutOpX86TestCaptureRaw outop_x86_test_capture_rawflags = {
+    .base.static_constraint = C_O1_I2(a, r, reZ),
+    .out_rr = tgen_x86_test_capture_rawflags,
+    .out_ri = tgen_x86_testi_capture_rawflags,
+};
+
+static void tgen_x86_capture_rawflags(TCGContext *s, TCGReg scratch,
+                                      TCGReg rawflags, TCGReg tmp)
 {
     tcg_debug_assert(scratch == TCG_REG_EAX);
     (void)tmp;
 
-    /* LAHF captures SF/ZF/CF in AH; SETO adds OF in AL without clobbering SF. */
     tcg_out8(s, 0x9f); /* lahf */
-    tcg_out_modrm(s, OPC_SETCC | JCC_JO, 0, scratch);
-    tcg_out_mov(s, TCG_TYPE_I32, rawflags, scratch);
+    tcg_out_modrm(s, OPC_SETCC | JCC_JO, 0, TCG_REG_EAX);
+    if (rawflags != TCG_REG_EAX) {
+        tcg_out_mov(s, TCG_TYPE_I32, rawflags, TCG_REG_EAX);
+    }
 }
 
-static const TCGOutOpX86A64SaveCmpFlags outop_x86_a64_capture_cmp_rawflags = {
+static const TCGOutOpX86CaptureRaw outop_x86_capture_rawflags = {
     .base.static_constraint = C_O3_I0(a, r, r),
-    .out = tgen_x86_a64_capture_cmp_rawflags,
+    .out = tgen_x86_capture_rawflags,
 };
 
 static void tcg_out_brcond2(TCGContext *s, TCGCond cond, TCGReg al,
@@ -4276,7 +4456,17 @@ tcg_target_op_def(TCGOpcode op, TCGType type, unsigned flags)
     case INDEX_op_x86_cmp_jcc:
         return C_O0_I2(r, reT);
 
-    case INDEX_op_x86_a64_capture_cmp_rawflags:
+    case INDEX_op_x86_cmp_brcond_capture_rawflags:
+    case INDEX_op_x86_cmp_jcc_capture_rawflags:
+        return C_O0_I2(r, reT);
+
+    case INDEX_op_x86_and_capture_rawflags:
+        return C_O2_I2(a, r, 1, reZ);
+
+    case INDEX_op_x86_test_capture_rawflags:
+        return C_O1_I2(a, r, reZ);
+
+    case INDEX_op_x86_capture_rawflags:
         return C_O3_I0(a, r, r);
 
     case INDEX_op_bitsel_vec:

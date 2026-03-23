@@ -47,7 +47,7 @@
 /* These are TCG globals which alias CPUARMState fields */
 static TCGv_i32 cpu_R[16];
 TCGv_i32 cpu_CF, cpu_NF, cpu_VF, cpu_ZF;
-TCGv_i32 cpu_x86_status4, cpu_x86_raw_flags, cpu_x86_cc_op, cpu_x86_flags_valid;
+TCGv_i32 cpu_x86_raw_flags, cpu_x86_cc_op, cpu_x86_flags_valid;
 TCGv_i64 cpu_exclusive_addr;
 TCGv_i64 cpu_exclusive_val;
 
@@ -70,8 +70,6 @@ void arm_translate_init(void)
     cpu_NF = tcg_global_mem_new_i32(tcg_env, offsetof(CPUARMState, NF), "NF");
     cpu_VF = tcg_global_mem_new_i32(tcg_env, offsetof(CPUARMState, VF), "VF");
     cpu_ZF = tcg_global_mem_new_i32(tcg_env, offsetof(CPUARMState, ZF), "ZF");
-    cpu_x86_status4 = tcg_global_mem_new_i32(tcg_env,
-        offsetof(CPUARMState, x86_status4), "x86_status4");
     cpu_x86_raw_flags = tcg_global_mem_new_i32(tcg_env,
         offsetof(CPUARMState, x86_raw_flags), "x86_raw_flags");
     cpu_x86_cc_op = tcg_global_mem_new_i32(tcg_env,

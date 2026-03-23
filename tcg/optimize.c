@@ -3342,6 +3342,12 @@ void tcg_optimize(TCGContext *s)
             finish_ebb(&ctx);
             done = true;
             break;
+#if defined(__i386__) || defined(__x86_64__)
+        case INDEX_op_x86_capture_rawflags:
+            ctx.carry_state = -1;
+            done = finish_folding(&ctx, op);
+            break;
+#endif
         default:
             done = finish_folding(&ctx, op);
             break;

@@ -272,7 +272,6 @@ typedef enum A64X86CCOp {
 
 typedef enum A64X86FlagsKind {
     A64_X86_FLAGS_INVALID = 0,
-    A64_X86_FLAGS_STATUS4,
     A64_X86_FLAGS_RAW,
 } A64X86FlagsKind;
 
@@ -329,11 +328,11 @@ typedef struct CPUArchState {
     uint32_t ZF; /* Z set if zero.  */
     /*
      * Canonicalized A64 flags cache for the x86 compare fast path.
-     * When x86_flags_valid == A64_X86_FLAGS_STATUS4, x86_status4 packs
-     * N/Z/C/V into bits [3:0]. When x86_flags_valid == A64_X86_FLAGS_RAW,
-     * x86_raw_flags stores x86 LAHF output in AH plus OF in AL bit 0.
+     * When x86_flags_valid == A64_X86_FLAGS_RAW, x86_raw_flags is either
+     * captured x86 LAHF output in AH plus OF in AL bit 0, or a synthetic
+     * compare/sub-style encoding of ARM NZCV. x86_cc_op describes how host
+     * CF should be interpreted when consuming x86_raw_flags as ARM C.
      */
-    uint32_t x86_status4;
     uint32_t x86_raw_flags;
     uint32_t x86_cc_op;
     uint32_t x86_flags_valid;
@@ -1597,7 +1596,6 @@ static inline void pstate_write(CPUARMState *env, uint64_t val)
     env->NF = val;
     env->CF = (val >> 29) & 1;
     env->VF = (val << 3) & 0x80000000;
-    env->x86_status4 = 0;
     env->x86_cc_op = A64_X86_CC_INVALID;
     env->x86_flags_valid = 0;
     env->daif = val & PSTATE_DAIF;
@@ -1646,7 +1644,6 @@ static inline void xpsr_write(CPUARMState *env, uint32_t val, uint32_t mask)
         env->NF = val;
         env->CF = (val >> 29) & 1;
         env->VF = (val << 3) & 0x80000000;
-        env->x86_status4 = 0;
         env->x86_cc_op = A64_X86_CC_INVALID;
         env->x86_flags_valid = 0;
     }
@@ -2530,6 +2527,7 @@ FIELD(TBFLAG_A64, ZT0EXC_EL, 39, 2)
 FIELD(TBFLAG_A64, GCS_EN, 41, 1)
 FIELD(TBFLAG_A64, GCS_RVCEN, 42, 1)
 FIELD(TBFLAG_A64, GCSSTR_EL, 43, 2)
+FIELD(TBFLAG_A64, X86_FLAGS_VALID, 45, 2)  /* Not cached. */
 
 /*
  * Helpers for using the above. Note that only the A64 accessors use

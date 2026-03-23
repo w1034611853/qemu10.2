@@ -630,6 +630,9 @@ TCGTBCPUState arm_get_tb_cpu_state(CPUState *cs)
 
     if (EX_TBFLAG_ANY(flags, AARCH64_STATE)) {
         pc = env->pc;
+        DP_TBFLAG_A64(flags, X86_FLAGS_VALID,
+                      env->x86_flags_valid == A64_X86_FLAGS_RAW ?
+                      A64_X86_FLAGS_RAW : A64_X86_FLAGS_INVALID);
         if (cpu_isar_feature(aa64_bti, env_archcpu(env))) {
             DP_TBFLAG_A64(flags, BTYPE, env->btype);
         }

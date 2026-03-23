@@ -1004,7 +1004,6 @@ static int cpu_pre_load(void *opaque)
      * future architecture change makes the reset value non-zero.
      */
     vfp_set_fpscr(env, 0);
-    env->x86_status4 = 0;
     env->x86_raw_flags = 0;
     env->x86_cc_op = A64_X86_CC_INVALID;
     env->x86_flags_valid = 0;

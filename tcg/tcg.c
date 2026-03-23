@@ -1028,17 +1028,53 @@ typedef struct TCGOutOpX86CmpJcc {
                    TCGReg a1, tcg_target_long a2, TCGLabel *label);
 } TCGOutOpX86CmpJcc;
 
+typedef struct TCGOutOpX86CmpBrcondCaptureRaw {
+    TCGOutOp base;
+    void (*out_rr)(TCGContext *s, TCGType type, TCGCond cond,
+                   TCGReg a1, TCGReg a2, tcg_target_long raw_off,
+                   TCGLabel *label);
+    void (*out_ri)(TCGContext *s, TCGType type, TCGCond cond,
+                   TCGReg a1, tcg_target_long a2,
+                   tcg_target_long raw_off, TCGLabel *label);
+} TCGOutOpX86CmpBrcondCaptureRaw;
+
+typedef struct TCGOutOpX86CmpJccCaptureRaw {
+    TCGOutOp base;
+    void (*out_rr)(TCGContext *s, TCGType type, int jcc,
+                   TCGReg a1, TCGReg a2, tcg_target_long raw_off,
+                   TCGLabel *label);
+    void (*out_ri)(TCGContext *s, TCGType type, int jcc,
+                   TCGReg a1, tcg_target_long a2,
+                   tcg_target_long raw_off, TCGLabel *label);
+} TCGOutOpX86CmpJccCaptureRaw;
+
+typedef struct TCGOutOpX86CaptureRaw {
+    TCGOutOp base;
+    void (*out)(TCGContext *s, TCGReg scratch, TCGReg rawflags, TCGReg tmp);
+} TCGOutOpX86CaptureRaw;
+
+typedef struct TCGOutOpX86AndCaptureRaw {
+    TCGOutOp base;
+    void (*out_rrr)(TCGContext *s, TCGType type,
+                    TCGReg rawflags, TCGReg dst, TCGReg rhs);
+    void (*out_rri)(TCGContext *s, TCGType type,
+                    TCGReg rawflags, TCGReg dst, tcg_target_long rhs);
+} TCGOutOpX86AndCaptureRaw;
+
+typedef struct TCGOutOpX86TestCaptureRaw {
+    TCGOutOp base;
+    void (*out_rr)(TCGContext *s, TCGType type,
+                   TCGReg rawflags, TCGReg lhs, TCGReg rhs);
+    void (*out_ri)(TCGContext *s, TCGType type,
+                   TCGReg rawflags, TCGReg lhs, tcg_target_long rhs);
+} TCGOutOpX86TestCaptureRaw;
+
 typedef struct TCGOutOpBrcond2 {
     TCGOutOp base;
     void (*out)(TCGContext *s, TCGCond cond, TCGReg al, TCGReg ah,
                 TCGArg bl, bool const_bl,
                 TCGArg bh, bool const_bh, TCGLabel *l);
 } TCGOutOpBrcond2;
-
-typedef struct TCGOutOpX86A64SaveCmpFlags {
-    TCGOutOp base;
-    void (*out)(TCGContext *s, TCGReg scratch, TCGReg rawflags, TCGReg tmp);
-} TCGOutOpX86A64SaveCmpFlags;
 
 typedef struct TCGOutOpBswap {
     TCGOutOp base;
@@ -1216,8 +1252,21 @@ static const TCGOutOp * const all_outop[NB_OPS] = {
 #if defined(__i386__) || defined(__x86_64__)
     OUTOP(INDEX_op_x86_cmp_brcond, TCGOutOpBrcond, outop_x86_cmp_brcond),
     OUTOP(INDEX_op_x86_cmp_jcc, TCGOutOpX86CmpJcc, outop_x86_cmp_jcc),
-    OUTOP(INDEX_op_x86_a64_capture_cmp_rawflags, TCGOutOpX86A64SaveCmpFlags,
-          outop_x86_a64_capture_cmp_rawflags),
+    OUTOP(INDEX_op_x86_cmp_brcond_capture_rawflags,
+          TCGOutOpX86CmpBrcondCaptureRaw,
+          outop_x86_cmp_brcond_capture_rawflags),
+    OUTOP(INDEX_op_x86_cmp_jcc_capture_rawflags,
+          TCGOutOpX86CmpJccCaptureRaw,
+          outop_x86_cmp_jcc_capture_rawflags),
+    OUTOP(INDEX_op_x86_and_capture_rawflags,
+          TCGOutOpX86AndCaptureRaw,
+          outop_x86_and_capture_rawflags),
+    OUTOP(INDEX_op_x86_test_capture_rawflags,
+          TCGOutOpX86TestCaptureRaw,
+          outop_x86_test_capture_rawflags),
+    OUTOP(INDEX_op_x86_capture_rawflags,
+          TCGOutOpX86CaptureRaw,
+          outop_x86_capture_rawflags),
 #endif
     OUTOP(INDEX_op_bswap16, TCGOutOpBswap, outop_bswap16),
     OUTOP(INDEX_op_bswap32, TCGOutOpBswap, outop_bswap32),
@@ -3049,6 +3098,7 @@ void tcg_dump_ops(TCGContext *s, FILE *f, bool have_prefs)
             switch (c) {
             case INDEX_op_brcond:
             case INDEX_op_x86_cmp_brcond:
+            case INDEX_op_x86_cmp_brcond_capture_rawflags:
             case INDEX_op_setcond:
             case INDEX_op_negsetcond:
             case INDEX_op_movcond:
@@ -3066,6 +3116,7 @@ void tcg_dump_ops(TCGContext *s, FILE *f, bool have_prefs)
                 break;
 #if defined(__i386__) || defined(__x86_64__)
             case INDEX_op_x86_cmp_jcc:
+            case INDEX_op_x86_cmp_jcc_capture_rawflags:
                 col += ne_fprintf(f, ",$0x%" TCG_PRIlx, op->args[k++]);
                 i = 1;
                 break;
@@ -3144,6 +3195,8 @@ void tcg_dump_ops(TCGContext *s, FILE *f, bool have_prefs)
             case INDEX_op_brcond:
             case INDEX_op_x86_cmp_brcond:
             case INDEX_op_x86_cmp_jcc:
+            case INDEX_op_x86_cmp_brcond_capture_rawflags:
+            case INDEX_op_x86_cmp_jcc_capture_rawflags:
             case INDEX_op_brcond2_i32:
                 col += ne_fprintf(f, "%s$L%d", k ? "," : "",
                                   arg_label(op->args[k])->id);
@@ -3601,6 +3654,8 @@ void tcg_op_remove(TCGContext *s, TCGOp *op)
     case INDEX_op_brcond:
     case INDEX_op_x86_cmp_brcond:
     case INDEX_op_x86_cmp_jcc:
+    case INDEX_op_x86_cmp_brcond_capture_rawflags:
+    case INDEX_op_x86_cmp_jcc_capture_rawflags:
         remove_label_use(op, 3);
         break;
     case INDEX_op_brcond2_i32:
@@ -3704,6 +3759,8 @@ static void move_label_uses(TCGLabel *to, TCGLabel *from)
         case INDEX_op_brcond:
         case INDEX_op_x86_cmp_brcond:
         case INDEX_op_x86_cmp_jcc:
+        case INDEX_op_x86_cmp_brcond_capture_rawflags:
+        case INDEX_op_x86_cmp_jcc_capture_rawflags:
             op->args[3] = label_arg(to);
             break;
         case INDEX_op_brcond2_i32:
@@ -5323,6 +5380,9 @@ static void tcg_reg_alloc_op(TCGContext *s, const TCGOp *op)
     case INDEX_op_x86_cmp_brcond:
         op_cond = op->args[2];
         break;
+    case INDEX_op_x86_cmp_brcond_capture_rawflags:
+        op_cond = op->args[2];
+        break;
     case INDEX_op_setcond:
     case INDEX_op_negsetcond:
     case INDEX_op_cmp_vec:
@@ -5918,6 +5978,26 @@ static void tcg_reg_alloc_op(TCGContext *s, const TCGOp *op)
         }
         break;
 
+    case INDEX_op_x86_cmp_brcond_capture_rawflags:
+        {
+            const TCGOutOpX86CmpBrcondCaptureRaw *out =
+                container_of(all_outop[op->opc],
+                             TCGOutOpX86CmpBrcondCaptureRaw, base);
+            TCGCond cond = new_args[2];
+            TCGLabel *label = arg_label(new_args[3]);
+            tcg_target_long raw_off = new_args[4];
+
+            tcg_debug_assert(!const_args[0]);
+            if (const_args[1]) {
+                out->out_ri(s, type, cond, new_args[0], new_args[1],
+                            raw_off, label);
+            } else {
+                out->out_rr(s, type, cond, new_args[0], new_args[1],
+                            raw_off, label);
+            }
+        }
+        break;
+
     case INDEX_op_x86_cmp_jcc:
         {
             const TCGOutOpX86CmpJcc *out =
@@ -5934,11 +6014,63 @@ static void tcg_reg_alloc_op(TCGContext *s, const TCGOp *op)
         }
         break;
 
-    case INDEX_op_x86_a64_capture_cmp_rawflags:
+    case INDEX_op_x86_cmp_jcc_capture_rawflags:
         {
-            const TCGOutOpX86A64SaveCmpFlags *out =
+            const TCGOutOpX86CmpJccCaptureRaw *out =
                 container_of(all_outop[op->opc],
-                             TCGOutOpX86A64SaveCmpFlags, base);
+                             TCGOutOpX86CmpJccCaptureRaw, base);
+            int jcc = new_args[2];
+            TCGLabel *label = arg_label(new_args[3]);
+            tcg_target_long raw_off = new_args[4];
+
+            tcg_debug_assert(!const_args[0]);
+            if (const_args[1]) {
+                out->out_ri(s, type, jcc, new_args[0], new_args[1],
+                            raw_off, label);
+            } else {
+                out->out_rr(s, type, jcc, new_args[0], new_args[1],
+                            raw_off, label);
+            }
+        }
+        break;
+
+    case INDEX_op_x86_and_capture_rawflags:
+        {
+            const TCGOutOpX86AndCaptureRaw *out =
+                container_of(all_outop[op->opc],
+                             TCGOutOpX86AndCaptureRaw, base);
+
+            tcg_debug_assert(!const_args[0]);
+            tcg_debug_assert(!const_args[1]);
+            tcg_debug_assert(!const_args[2]);
+            if (const_args[3]) {
+                out->out_rri(s, type, new_args[0], new_args[1], new_args[3]);
+            } else {
+                out->out_rrr(s, type, new_args[0], new_args[1], new_args[3]);
+            }
+        }
+        break;
+
+    case INDEX_op_x86_test_capture_rawflags:
+        {
+            const TCGOutOpX86TestCaptureRaw *out =
+                container_of(all_outop[op->opc],
+                             TCGOutOpX86TestCaptureRaw, base);
+
+            tcg_debug_assert(!const_args[0]);
+            tcg_debug_assert(!const_args[1]);
+            if (const_args[2]) {
+                out->out_ri(s, type, new_args[0], new_args[1], new_args[2]);
+            } else {
+                out->out_rr(s, type, new_args[0], new_args[1], new_args[2]);
+            }
+        }
+        break;
+
+    case INDEX_op_x86_capture_rawflags:
+        {
+            const TCGOutOpX86CaptureRaw *out =
+                container_of(all_outop[op->opc], TCGOutOpX86CaptureRaw, base);
 
             tcg_debug_assert(!const_args[0]);
             tcg_debug_assert(!const_args[1]);
@@ -5946,6 +6078,7 @@ static void tcg_reg_alloc_op(TCGContext *s, const TCGOp *op)
             out->out(s, new_args[0], new_args[1], new_args[2]);
         }
         break;
+
 #endif
 
     case INDEX_op_movcond:

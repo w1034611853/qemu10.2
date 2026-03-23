@@ -1147,7 +1147,6 @@ static void do_setp(CPUARMState *env, uint32_t syndrome, uint32_t mtedesc,
     env->ZF = 1; /* our env->ZF encoding is inverted */
     env->CF = 0;
     env->VF = 0;
-    env->x86_status4 = 0;
     env->x86_raw_flags = 0;
     env->x86_cc_op = A64_X86_CC_INVALID;
     env->x86_flags_valid = 0;
@@ -1550,7 +1549,6 @@ static void do_cpyp(CPUARMState *env, uint32_t syndrome, uint32_t wdesc,
     env->ZF = 1; /* our env->ZF encoding is inverted */
     env->CF = 0;
     env->VF = 0;
-    env->x86_status4 = 0;
     env->x86_raw_flags = 0;
     env->x86_cc_op = A64_X86_CC_INVALID;
     env->x86_flags_valid = 0;

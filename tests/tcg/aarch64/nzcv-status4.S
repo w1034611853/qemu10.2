@@ -1224,6 +1224,223 @@ t79_ok:
     lsr     x11, x11, #28
     expect_reg_imm x11, 3, 0x79
 
+    /* 0x7a: CMP raw flags -> XAFLAG -> ADC consumes updated carry */
+    mov     x5, #10
+    mov     x6, #20
+    mov     x0, #1
+    lsl     x0, x0, #63       /* INT64_MIN */
+    mov     x1, #1
+    cmp     x0, x1
+    xaflag
+    adc     x7, x5, x6
+    expect_nzcv 0x2, 0x7a
+    expect_reg_imm x7, 31, 0x7a
+
+    /* 0x7b: CMP raw flags -> AXFLAG -> ADC consumes updated carry */
+    mov     x5, #10
+    mov     x6, #20
+    mov     x0, #1
+    lsl     x0, x0, #63       /* INT64_MIN */
+    mov     x1, #1
+    cmp     x0, x1
+    axflag
+    adc     x7, x5, x6
+    expect_nzcv 0x4, 0x7b
+    expect_reg_imm x7, 30, 0x7b
+
+    /* 0x7c: CMP + B.eq fallthrough -> CSEL(hi) consumes raw composite cond */
+    mov     x3, #77
+    mov     x4, #88
+    mov     x0, #9
+    cmp     x0, #5
+    b.eq    t7c_bad
+    csel    x2, x3, x4, hi
+    expect_nzcv 0x2, 0x7c
+    expect_reg_imm x2, 77, 0x7c
+    b       t7c_done
+t7c_bad:
+    mov     x20, #0x7c
+    b       fail
+t7c_done:
+
+    /* 0x7d: CMP + B.eq fallthrough -> FCSEL(gt) consumes raw composite cond */
+    fmov    d2, #8.0
+    fmov    d3, #1.0
+    mov     x0, #2
+    cmp     x0, #1
+    b.eq    t7d_bad
+    fcsel   d4, d2, d3, gt
+    expect_nzcv 0x2, 0x7d
+    fmov    x5, d4
+    ldr     x6, =0x4020000000000000
+    mov     x20, #0x7d
+    cmp     x5, x6
+    b.eq    1f
+    b       fail
+1:
+    b       t7d_done
+t7d_bad:
+    mov     x20, #0x7d
+    b       fail
+t7d_done:
+
+    /* 0x7e: CMP + B.eq fallthrough -> FCCMP(gt) consumes raw composite cond */
+    mov     x0, #2
+    cmp     x0, #1
+    b.eq    t7e_bad
+    fmov    d0, #1.0
+    fmov    d1, #1.0
+    fccmp   d0, d1, #0xa, gt
+    expect_nzcv 0x6, 0x7e
+    b       t7e_done
+t7e_bad:
+    mov     x20, #0x7e
+    b       fail
+t7e_done:
+
+    /* 0x7f: CMP + B.eq fallthrough -> SETF8 preserves raw canonical carry */
+    mov     x0, #5
+    cmp     x0, #3
+    b.eq    t7f_bad
+    mov     w0, #0x80
+    setf8   w0
+    expect_nzcv 0xb, 0x7f
+    b       t7f_done
+t7f_bad:
+    mov     x20, #0x7f
+    b       fail
+t7f_done:
+
+    /* 0x80: CCMP true -> ADC consumes carry from synthetic raw result */
+    mov     x0, #1
+    cmp     x0, #1
+    mov     x1, #5
+    mov     x2, #3
+    ccmp    x1, x2, #0xa, eq
+    mov     x5, #10
+    mov     x6, #20
+    adc     x7, x5, x6
+    expect_nzcv 0x2, 0x80
+    expect_reg_imm x7, 31, 0x80
+
+    /* 0x81: CCMN false literal -> ADC consumes literal carry from raw */
+    mov     x0, #1
+    cmp     x0, #2
+    movn    x1, #0            /* -1 */
+    mov     x2, #1
+    ccmn    x1, x2, #0x8, eq
+    mov     x5, #10
+    mov     x6, #20
+    adc     x7, x5, x6
+    expect_nzcv 0x8, 0x81
+    expect_reg_imm x7, 30, 0x81
+
+    /* 0x82: TST logical-raw producer -> ADC sees carry=0 */
+    mov     x0, #3
+    mov     x1, #1
+    tst     x0, x1
+    mov     x5, #10
+    mov     x6, #20
+    adc     x7, x5, x6
+    expect_nzcv 0x0, 0x82
+    expect_reg_imm x7, 30, 0x82
+
+    /* 0x83: ADCS raw producer -> ADC sees carry=1 */
+    mov     x0, #5
+    cmp     x0, #3            /* Seed C = 1 */
+    movn    x1, #0            /* -1 */
+    mov     x2, #0
+    adcs    xzr, x1, x2
+    mov     x5, #10
+    mov     x6, #20
+    adc     x7, x5, x6
+    expect_nzcv 0x6, 0x83
+    expect_reg_imm x7, 31, 0x83
+
+    /* 0x84: SBCS raw producer -> ADC sees carry=0 */
+    mov     x0, #5
+    cmp     x0, #3            /* Seed C = 1 */
+    mov     x1, #1
+    mov     x2, #3
+    sbcs    xzr, x1, x2
+    mov     x5, #10
+    mov     x6, #20
+    adc     x7, x5, x6
+    expect_nzcv 0x8, 0x84
+    expect_reg_imm x7, 30, 0x84
+
+    /* 0x85: ADDS64 direct raw producer -> B.cs and MRS NZCV */
+    movn    x1, #0            /* -1 */
+    mov     x2, #1
+    adds    x3, x1, x2
+    expect_branch cs, 0x85
+    expect_nzcv 0x6, 0x85
+
+    /* 0x86: ADDS32 direct raw producer -> MRS NZCV */
+    movn    w1, #0            /* 0xffffffff */
+    mov     w2, #1
+    adds    w3, w1, w2
+    expect_nzcv 0x6, 0x86
+
+    /* 0x87: ANDS32 direct raw producer keeps bit31-sign semantics */
+    mov     w1, #0x80000000
+    movn    w2, #0
+    ands    w3, w1, w2
+    expect_nzcv 0x8, 0x87
+
+    /* 0x88: ADCS32 direct raw producer -> ADC consumes carry */
+    mov     x0, #5
+    cmp     x0, #3            /* Seed C = 1 */
+    movn    w1, #0            /* 0xffffffff */
+    mov     w2, #0
+    adcs    w3, w1, w2
+    mov     w5, #10
+    mov     w6, #20
+    adc     w7, w5, w6
+    expect_nzcv 0x6, 0x88
+    expect_reg_imm x7, 31, 0x88
+
+    /* 0x89: BICS64 direct raw producer -> ADC sees carry=0 */
+    mov     x1, #15
+    mov     x2, #3
+    bics    x3, x1, x2
+    mov     x5, #10
+    mov     x6, #20
+    adc     x7, x5, x6
+    expect_nzcv 0x0, 0x89
+    expect_reg_imm x3, 12, 0x89
+    expect_reg_imm x7, 30, 0x89
+
+    /* 0x8a: TST immediate direct raw producer -> ADC sees carry=0 */
+    mov     x0, #3
+    tst     x0, #1
+    mov     x5, #10
+    mov     x6, #20
+    adc     x7, x5, x6
+    expect_nzcv 0x0, 0x8a
+    expect_reg_imm x7, 30, 0x8a
+
+    /* 0x8b: ANDS immediate direct raw producer keeps result and carry=0 */
+    mov     x1, #15
+    ands    x3, x1, #12
+    mov     x5, #10
+    mov     x6, #20
+    adc     x7, x5, x6
+    expect_nzcv 0x0, 0x8b
+    expect_reg_imm x3, 12, 0x8b
+    expect_reg_imm x7, 30, 0x8b
+
+    /* 0x8c: SUBS64 direct raw producer -> ADC sees carry=1 */
+    mov     x1, #5
+    mov     x2, #3
+    subs    x3, x1, x2
+    mov     x5, #10
+    mov     x6, #20
+    adc     x7, x5, x6
+    expect_nzcv 0x2, 0x8c
+    expect_reg_imm x3, 2, 0x8c
+    expect_reg_imm x7, 31, 0x8c
+
     b       after_shared_consumers
 
 shared_nzcv_consumer:
