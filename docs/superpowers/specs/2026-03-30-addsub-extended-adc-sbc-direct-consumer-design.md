@@ -251,14 +251,18 @@ consumer 看到的仍然是：
 
 ### correctness
 
-至少补三类 focused coverage：
+至少补四类 focused coverage：
 
 1. `adc-sbc-host-direct`
    - 增加 ext-form guest case
    - 断言 x86 host codegen 真的命中 direct path
-2. `nzcv-status4`
+2. ext-form `B.cond` 回归
+   - 必须补一个 `SUBS xzr, ..., <ext> -> B.cond` 的 codegen / 语义保护用例
+   - 目标不是验证新 direct path，而是防止 future-branch 与 adjacent-consumer
+     的判定顺序写错，误伤现有 `cmp+jcc` 收益
+3. `nzcv-status4`
    - 增加 ext-form compare-like 与 materialized 语义覆盖
-3. `adcsbc-bench`
+4. `adcsbc-bench`
    - 新增真正使用 `<ext>` producer 的 dedicated mode
 
 ### benchmark 口径
@@ -301,6 +305,13 @@ benchmark 里要确保：
 - `subsbc64_ext`
 - `subsbc32_ext`
 
+其中 32-bit compare-like 两项：
+
+- `cmnadc32_ext`
+- `cmpsbc32_ext`
+
+要额外做更长一档的确认轮次，避免把短跑噪音误判成可收结论。
+
 ## 风险
 
 ### 风险 1：误伤现有 `SUBS xzr,<ext> -> B.cond`
@@ -327,6 +338,15 @@ ext-form benchmark 如果把扩展值预先算进普通寄存器，
 
 而比 64-bit 更敏感，所以 32-bit 必须独立做 A/B。
 
+如果 32-bit compare-like ext path 出现稳定负回退，这一步优先按“代码侧范围收窄”
+处理，也就是：
+
+- 在 producer 命中条件里裁掉单一亏损路径
+- 保留同家族里其余仍然正收益的 reg / imm / ext 子路径
+
+这里说的“单一路径回滚”不是新增 per-subpath env gate，而是和
+`CMN32 #imm -> ADC32` 一样，按实现范围收窄 accepted scope。
+
 ## 完成标准
 
 这一步完成的标准是：
@@ -339,5 +359,10 @@ ext-form benchmark 如果把扩展值预先算进普通寄存器，
 如果 correctness 过了，但某一条 ext-form 子路径出现稳定负收益，
 则这一步按已有策略处理：
 
-- 优先裁掉单一亏损路径
+- 优先通过代码侧 scope narrowing 裁掉单一亏损路径
 - 不把整档 ext-form 一起撤回
+
+补充约束：
+
+- `SUBS xzr,<ext> -> B.cond` 的现有 fast path 必须保持有专门 regression 保护
+- `cmnadc32_ext` / `cmpsbc32_ext` 只有在短跑和长跑都不过线时，才允许被收窄
