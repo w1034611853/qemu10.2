@@ -46,5 +46,13 @@ DEF(x86_and_capture_rawflags, 2, 2, 0,
     TCG_OPF_SIDE_EFFECTS | TCG_OPF_INT)
 DEF(x86_test_capture_rawflags, 1, 2, 0,
     TCG_OPF_SIDE_EFFECTS | TCG_OPF_INT)
+DEF(x86_sbb_capture_rawflags, 2, 3, 0,
+    TCG_OPF_SIDE_EFFECTS | TCG_OPF_INT)
+DEF(x86_cmp_sbb_capture_cmp_rawflags, 1, 4, 1,
+    TCG_OPF_SIDE_EFFECTS | TCG_OPF_INT)
+DEF(x86_add_adc_capture_add_rawflags, 1, 4, 1,
+    TCG_OPF_SIDE_EFFECTS | TCG_OPF_INT)
+DEF(x86_add_adc_capture_add_rawflags_i32, 1, 4, 1,
+    TCG_OPF_SIDE_EFFECTS | TCG_OPF_INT)
 DEF(x86_capture_rawflags, 3, 0, 0,
     TCG_OPF_SIDE_EFFECTS | TCG_OPF_INT | TCG_OPF_CARRY_IN)

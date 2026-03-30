@@ -855,6 +855,7 @@ static int tcg_out_pool_finalize(TCGContext *s)
 #define C_O1_I4(O1, I1, I2, I3, I4)     C_PFX5(c_o1_i4_, O1, I1, I2, I3, I4),
 
 #define C_N1_I2(O1, I1, I2)             C_PFX3(c_n1_i2_, O1, I1, I2),
+#define C_N1_I4(O1, I1, I2, I3, I4)     C_PFX5(c_n1_i4_, O1, I1, I2, I3, I4),
 #define C_N1O1_I1(O1, O2, I1)           C_PFX3(c_n1o1_i1_, O1, O2, I1),
 #define C_N2_I1(O1, O2, I1)             C_PFX3(c_n2_i1_, O1, O2, I1),
 
@@ -883,6 +884,7 @@ static TCGConstraintSetIndex tcg_target_op_def(TCGOpcode, TCGType, unsigned);
 #undef C_O1_I3
 #undef C_O1_I4
 #undef C_N1_I2
+#undef C_N1_I4
 #undef C_N1O1_I1
 #undef C_N2_I1
 #undef C_O3_I0
@@ -911,6 +913,7 @@ typedef struct TCGConstraintSet {
 #define C_O1_I4(O1, I1, I2, I3, I4)     { 1, 4, { #O1, #I1, #I2, #I3, #I4 } },
 
 #define C_N1_I2(O1, I1, I2)             { 1, 2, { "&" #O1, #I1, #I2 } },
+#define C_N1_I4(O1, I1, I2, I3, I4)     { 1, 4, { "&" #O1, #I1, #I2, #I3, #I4 } },
 #define C_N1O1_I1(O1, O2, I1)           { 2, 1, { "&" #O1, #O2, #I1 } },
 #define C_N2_I1(O1, O2, I1)             { 2, 1, { "&" #O1, "&" #O2, #I1 } },
 
@@ -935,6 +938,7 @@ static const TCGConstraintSet constraint_sets[] = {
 #undef C_O1_I3
 #undef C_O1_I4
 #undef C_N1_I2
+#undef C_N1_I4
 #undef C_N1O1_I1
 #undef C_N2_I1
 #undef C_O3_I0
@@ -958,6 +962,7 @@ static const TCGConstraintSet constraint_sets[] = {
 #define C_O1_I4(O1, I1, I2, I3, I4)     C_PFX5(c_o1_i4_, O1, I1, I2, I3, I4)
 
 #define C_N1_I2(O1, I1, I2)             C_PFX3(c_n1_i2_, O1, I1, I2)
+#define C_N1_I4(O1, I1, I2, I3, I4)     C_PFX5(c_n1_i4_, O1, I1, I2, I3, I4)
 #define C_N1O1_I1(O1, O2, I1)           C_PFX3(c_n1o1_i1_, O1, O2, I1)
 #define C_N2_I1(O1, O2, I1)             C_PFX3(c_n2_i1_, O1, O2, I1)
 
@@ -1068,6 +1073,27 @@ typedef struct TCGOutOpX86TestCaptureRaw {
     void (*out_ri)(TCGContext *s, TCGType type,
                    TCGReg rawflags, TCGReg lhs, tcg_target_long rhs);
 } TCGOutOpX86TestCaptureRaw;
+
+typedef struct TCGOutOpX86SbbCaptureRaw {
+    TCGOutOp base;
+    void (*out_rrrr)(TCGContext *s, TCGType type, TCGReg rawflags,
+                     TCGReg dst, TCGReg lhs, TCGReg rhs, TCGReg carry);
+} TCGOutOpX86SbbCaptureRaw;
+
+typedef struct TCGOutOpX86CmpSbbCaptureCmpRaw {
+    TCGOutOp base;
+    void (*out_rrrr)(TCGContext *s, TCGType type, TCGReg dst,
+                     TCGReg src, TCGReg cmp_lhs, TCGReg cmp_rhs,
+                     tcg_target_long raw_off);
+} TCGOutOpX86CmpSbbCaptureCmpRaw;
+
+typedef struct TCGOutOpX86AddAdcCaptureAddRaw {
+    TCGOutOp base;
+    void (*out_rrrrr)(TCGContext *s, TCGType type, TCGReg dst,
+                      TCGReg adc_lhs, TCGReg adc_rhs,
+                      TCGReg add_lhs, TCGReg add_rhs,
+                      tcg_target_long raw_off);
+} TCGOutOpX86AddAdcCaptureAddRaw;
 
 typedef struct TCGOutOpBrcond2 {
     TCGOutOp base;
@@ -1264,6 +1290,18 @@ static const TCGOutOp * const all_outop[NB_OPS] = {
     OUTOP(INDEX_op_x86_test_capture_rawflags,
           TCGOutOpX86TestCaptureRaw,
           outop_x86_test_capture_rawflags),
+    OUTOP(INDEX_op_x86_sbb_capture_rawflags,
+          TCGOutOpX86SbbCaptureRaw,
+          outop_x86_sbb_capture_rawflags),
+    OUTOP(INDEX_op_x86_cmp_sbb_capture_cmp_rawflags,
+          TCGOutOpX86CmpSbbCaptureCmpRaw,
+          outop_x86_cmp_sbb_capture_cmp_rawflags),
+    OUTOP(INDEX_op_x86_add_adc_capture_add_rawflags,
+          TCGOutOpX86AddAdcCaptureAddRaw,
+          outop_x86_add_adc_capture_add_rawflags),
+    OUTOP(INDEX_op_x86_add_adc_capture_add_rawflags_i32,
+          TCGOutOpX86AddAdcCaptureAddRaw,
+          outop_x86_add_adc_capture_add_rawflags_i32),
     OUTOP(INDEX_op_x86_capture_rawflags,
           TCGOutOpX86CaptureRaw,
           outop_x86_capture_rawflags),
@@ -6064,6 +6102,55 @@ static void tcg_reg_alloc_op(TCGContext *s, const TCGOp *op)
             } else {
                 out->out_rr(s, type, new_args[0], new_args[1], new_args[2]);
             }
+        }
+        break;
+
+    case INDEX_op_x86_sbb_capture_rawflags:
+        {
+            const TCGOutOpX86SbbCaptureRaw *out =
+                container_of(all_outop[op->opc],
+                             TCGOutOpX86SbbCaptureRaw, base);
+
+            tcg_debug_assert(!const_args[0]);
+            tcg_debug_assert(!const_args[1]);
+            tcg_debug_assert(!const_args[2]);
+            tcg_debug_assert(!const_args[3]);
+            tcg_debug_assert(!const_args[4]);
+            out->out_rrrr(s, type, new_args[0], new_args[1], new_args[2],
+                          new_args[3], new_args[4]);
+        }
+        break;
+
+    case INDEX_op_x86_cmp_sbb_capture_cmp_rawflags:
+        {
+            const TCGOutOpX86CmpSbbCaptureCmpRaw *out =
+                container_of(all_outop[op->opc],
+                             TCGOutOpX86CmpSbbCaptureCmpRaw, base);
+
+            tcg_debug_assert(!const_args[0]);
+            tcg_debug_assert(!const_args[1]);
+            tcg_debug_assert(!const_args[2]);
+            tcg_debug_assert(!const_args[3]);
+            tcg_debug_assert(!const_args[4]);
+            out->out_rrrr(s, type, new_args[0], new_args[2], new_args[3],
+                          new_args[4], new_args[5]);
+        }
+        break;
+
+    case INDEX_op_x86_add_adc_capture_add_rawflags:
+    case INDEX_op_x86_add_adc_capture_add_rawflags_i32:
+        {
+            const TCGOutOpX86AddAdcCaptureAddRaw *out =
+                container_of(all_outop[op->opc],
+                             TCGOutOpX86AddAdcCaptureAddRaw, base);
+
+            tcg_debug_assert(!const_args[0]);
+            tcg_debug_assert(!const_args[1]);
+            tcg_debug_assert(!const_args[2]);
+            tcg_debug_assert(!const_args[3]);
+            tcg_debug_assert(!const_args[4]);
+            out->out_rrrrr(s, type, new_args[0], new_args[1], new_args[2],
+                           new_args[3], new_args[4], new_args[5]);
         }
         break;
 

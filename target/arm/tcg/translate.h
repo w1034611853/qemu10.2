@@ -214,6 +214,7 @@ typedef struct DisasContext {
     bool a64_cmp_pending_valid;
     bool a64_cmp_pending_keep;
     bool a64_cmp_pending_sf;
+    bool a64_cmp_pending_materialized;
     TCGv_i64 a64_cmp_pending_lhs;
     TCGv_i64 a64_cmp_pending_rhs;
     TCGOp *a64_cmp_pending_rewind;

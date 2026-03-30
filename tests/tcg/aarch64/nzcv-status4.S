@@ -1441,6 +1441,151 @@ t7f_done:
     expect_reg_imm x3, 2, 0x8c
     expect_reg_imm x7, 31, 0x8c
 
+    /* 0x8d: SBCS direct raw producer keeps carry=1 */
+    mov     x0, #5
+    cmp     x0, #3            /* Seed C = 1 */
+    mov     x1, #5
+    mov     x2, #3
+    sbcs    x3, x1, x2
+    mov     x5, #10
+    mov     x6, #20
+    adc     x7, x5, x6
+    expect_nzcv 0x2, 0x8d
+    expect_reg_imm x3, 2, 0x8d
+    expect_reg_imm x7, 31, 0x8d
+
+    /* 0x8e: SBCS32 direct raw producer keeps carry=1 */
+    mov     x0, #5
+    cmp     x0, #3            /* Seed C = 1 */
+    mov     w1, #5
+    mov     w2, #3
+    sbcs    w3, w1, w2
+    mov     w5, #10
+    mov     w6, #20
+    adc     w7, w5, w6
+    expect_nzcv 0x2, 0x8e
+    expect_reg_imm x3, 2, 0x8e
+    expect_reg_imm x7, 31, 0x8e
+
+    /* 0x8f: SBCS compare-like producer -> B.cs */
+    mov     x0, #5
+    cmp     x0, #3            /* Seed C = 1 */
+    mov     x1, #5
+    mov     x2, #3
+    sbcs    xzr, x1, x2
+    expect_branch cs, 0x8f
+    expect_nzcv 0x2, 0x8f
+
+    /* 0x90: SBCS compare-like producer -> B.mi */
+    mov     x0, #5
+    cmp     x0, #3            /* Seed C = 1 */
+    mov     x1, #1
+    mov     x2, #3
+    sbcs    xzr, x1, x2
+    expect_branch mi, 0x90
+    expect_nzcv 0x8, 0x90
+
+    /* 0x91: ORN64 shifted-reg must behave like ORR with inverted operand */
+    mov     x1, #0x123
+    mov     x2, #0x5
+    lsl     x10, x2, #4
+    mvn     x10, x10
+    orr     x11, x1, x10
+    orn     x3, x1, x2, lsl #4
+    expect_reg_reg x3, x11, 0x91
+
+    /* 0x92: EON64 shifted-reg must behave like EOR with inverted operand */
+    mov     x1, #0x321
+    mov     x2, #0x6
+    lsl     x10, x2, #3
+    mvn     x10, x10
+    eor     x11, x1, x10
+    eon     x4, x1, x2, lsl #3
+    expect_reg_reg x4, x11, 0x92
+
+    /* 0x93: adjacent CMP + plain SBC uses carry directly but preserves NZCV */
+    mov     x0, #5
+    mov     x1, #5
+    cmp     x0, x1
+    mov     x5, #9
+    mov     x6, #3
+    sbc     x8, x5, x6
+    expect_branch eq, 0x93
+    expect_nzcv 0x6, 0x93
+    expect_reg_imm x8, 6, 0x93
+
+    /* 0x94: adjacent CMN64 + plain ADC preserves NZCV and result */
+    mov     x5, #9
+    mov     x6, #3
+    movn    x0, #0            /* -1 */
+    mov     x1, #1
+    cmn     x0, x1
+    adc     x8, x5, x6
+    expect_branch eq, 0x94
+    expect_nzcv 0x6, 0x94
+    expect_reg_imm x8, 13, 0x94
+
+    /* 0x95: adjacent CMN32 + plain ADC preserves 32-bit carry */
+    mov     w5, #9
+    mov     w6, #3
+    movn    w0, #0            /* -1 */
+    mov     w1, #1
+    cmn     w0, w1
+    adc     w8, w5, w6
+    expect_branch eq, 0x95
+    expect_nzcv 0x6, 0x95
+    expect_reg_imm x8, 13, 0x95
+
+    /* 0x96: adjacent ADDS64 rd + plain ADC preserves result and NZCV */
+    movn    x0, #0            /* -1 */
+    mov     x1, #1
+    mov     x6, #9
+    mov     x7, #3
+    adds    x5, x0, x1
+    adc     x8, x6, x7
+    expect_branch eq, 0x96
+    expect_nzcv 0x6, 0x96
+    expect_reg_imm x5, 0, 0x96
+    expect_reg_imm x8, 13, 0x96
+
+    /* 0x97: adjacent ADDS32 rd + plain ADC preserves 32-bit carry */
+    movn    w0, #0            /* -1 */
+    mov     w1, #1
+    mov     w6, #9
+    mov     w7, #3
+    adds    w5, w0, w1
+    adc     w8, w6, w7
+    expect_branch eq, 0x97
+    expect_nzcv 0x6, 0x97
+    expect_reg_imm x5, 0, 0x97
+    expect_reg_imm x8, 13, 0x97
+
+    /* 0x98: adjacent SUBS64 rd + plain SBC preserves result and NZCV */
+    mov     x0, #0
+    mov     x1, #1
+    mov     x6, #9
+    mov     x7, #3
+    subs    x5, x0, x1
+    sbc     x8, x6, x7
+    movn    x10, #0           /* -1 */
+    expect_branch mi, 0x98
+    expect_nzcv 0x8, 0x98
+    expect_reg_reg x5, x10, 0x98
+    expect_reg_imm x8, 5, 0x98
+
+    /* 0x99: adjacent SUBS32 rd + plain SBC preserves 32-bit borrow */
+    mov     w0, #0
+    mov     w1, #1
+    mov     w6, #9
+    mov     w7, #3
+    subs    w5, w0, w1
+    sbc     w8, w6, w7
+    movn    w10, #0           /* 0xffffffff */
+    expect_branch mi, 0x99
+    expect_nzcv 0x8, 0x99
+    expect_reg_reg x5, x10, 0x99
+    expect_reg_imm x8, 5, 0x99
+
     b       after_shared_consumers
 
 shared_nzcv_consumer:

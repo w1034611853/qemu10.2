@@ -630,6 +630,8 @@ static inline bool a64_cc_op_carry_is_inverted(uint32_t cc_op)
     switch (cc_op) {
     case A64_X86_CC_SUB32:
     case A64_X86_CC_SUB64:
+    case A64_X86_CC_SBC32:
+    case A64_X86_CC_SBC64:
         return true;
     default:
         return false;
@@ -642,6 +644,19 @@ static void a64_extract_raw_flags_bit(TCGv_i32 dst, unsigned bit)
     tcg_gen_andi_i32(dst, dst, 1);
 }
 
+static void a64_get_current_nzcv_bits(DisasContext *s, TCGv_i32 n, TCGv_i32 z,
+                                      TCGv_i32 c, TCGv_i32 v);
+static void a64_gen_nz64_bits(TCGv_i32 n, TCGv_i32 z, TCGv_i64 result);
+static void a64_gen_nz32_bits(TCGv_i32 n, TCGv_i32 z, TCGv_i32 result);
+static void a64_gen_add_nzcv_bits(int sf, TCGv_i64 dest,
+                                  TCGv_i32 n, TCGv_i32 z,
+                                  TCGv_i32 c, TCGv_i32 v,
+                                  TCGv_i64 t0, TCGv_i64 t1);
+static void a64_gen_sub_nzcv_bits(int sf, TCGv_i64 dest,
+                                  TCGv_i32 n, TCGv_i32 z,
+                                  TCGv_i32 c, TCGv_i32 v,
+                                  TCGv_i64 t0, TCGv_i64 t1);
+
 static void a64_raw_flags_get_c_runtime(TCGv_i32 dst)
 {
     TCGv_i32 invert = tcg_temp_new_i32();
@@ -652,6 +667,12 @@ static void a64_raw_flags_get_c_runtime(TCGv_i32 dst)
                          A64_X86_CC_SUB32);
     tcg_gen_setcondi_i32(TCG_COND_EQ, tmp, cpu_x86_cc_op,
                          A64_X86_CC_SUB64);
+    tcg_gen_or_i32(invert, invert, tmp);
+    tcg_gen_setcondi_i32(TCG_COND_EQ, tmp, cpu_x86_cc_op,
+                         A64_X86_CC_SBC32);
+    tcg_gen_or_i32(invert, invert, tmp);
+    tcg_gen_setcondi_i32(TCG_COND_EQ, tmp, cpu_x86_cc_op,
+                         A64_X86_CC_SBC64);
     tcg_gen_or_i32(invert, invert, tmp);
     tcg_gen_xor_i32(dst, dst, invert);
 }
@@ -711,6 +732,7 @@ static void a64_record_cmp_for_bcond(DisasContext *s, bool sf,
     s->a64_cmp_pending_valid = true;
     s->a64_cmp_pending_keep = true;
     s->a64_cmp_pending_sf = sf;
+    s->a64_cmp_pending_materialized = false;
     s->a64_cmp_pending_lhs = lhs;
     s->a64_cmp_pending_rhs = rhs;
     s->a64_cmp_pending_rewind = rewind;
@@ -734,6 +756,55 @@ static bool a64_insn_is_plain_bcond(uint32_t insn, int *cc)
 
     *cc = extract32(insn, 0, 4);
     return *cc < 0x0e;
+}
+
+static bool a64_insn_is_plain_sbc_reg(uint32_t insn)
+{
+    /*
+     * SBC . 10 11010000 ..... 000000 ..... .....
+     * Restrict the first direct-consumer step to the plain register form.
+     */
+    return (insn & 0x7fe0fc00u) == 0x5a000000u;
+}
+
+static bool a64_insn_is_plain_adc_reg(uint32_t insn)
+{
+    /*
+     * ADC . 00 11010000 ..... 000000 ..... .....
+     * Restrict the first add-side direct-consumer step to the plain
+     * register form.
+     */
+    return (insn & 0x7fe0fc00u) == 0x1a000000u;
+}
+
+static bool a64_cmp_sbc_direct_enabled(void)
+{
+    static int cached = -1;
+
+    if (cached < 0) {
+        cached = getenv("QEMU_A64_DISABLE_CMP_SBC_DIRECT") ? 0 : 1;
+    }
+    return cached != 0;
+}
+
+static bool a64_add_adc_direct_enabled(void)
+{
+    static int cached = -1;
+
+    if (cached < 0) {
+        cached = getenv("QEMU_A64_DISABLE_ADD_ADC_DIRECT") ? 0 : 1;
+    }
+    return cached != 0;
+}
+
+static bool a64_sub_sbc_direct_enabled(void)
+{
+    static int cached = -1;
+
+    if (cached < 0) {
+        cached = getenv("QEMU_A64_DISABLE_SUB_SBC_DIRECT") ? 0 : 1;
+    }
+    return cached != 0;
 }
 
 /*
@@ -817,11 +888,83 @@ static bool a64_find_future_bcond_gap(DisasContext *s, uint8_t *gap_insns)
     }
     return false;
 }
+
+static bool a64_find_adjacent_plain_sbc_cmp(DisasContext *s)
+{
+    target_ulong pc = s->base.pc_next;
+
+    if (!a64_cmp_sbc_direct_enabled()) {
+        return false;
+    }
+    if (s->base.max_insns - s->base.num_insns <= 0) {
+        return false;
+    }
+    if (!translator_is_same_page(&s->base, pc)) {
+        return false;
+    }
+
+    return a64_insn_is_plain_sbc_reg(arm_ldl_code(s->env, &s->base, pc,
+                                                  s->sctlr_b));
+}
+
+static bool a64_find_adjacent_plain_sbc_sub(DisasContext *s)
+{
+    target_ulong pc = s->base.pc_next;
+
+    if (!a64_sub_sbc_direct_enabled()) {
+        return false;
+    }
+    if (s->base.max_insns - s->base.num_insns <= 0) {
+        return false;
+    }
+    if (!translator_is_same_page(&s->base, pc)) {
+        return false;
+    }
+
+    return a64_insn_is_plain_sbc_reg(arm_ldl_code(s->env, &s->base, pc,
+                                                  s->sctlr_b));
+}
+
+static bool a64_find_adjacent_plain_adc(DisasContext *s)
+{
+    target_ulong pc = s->base.pc_next;
+
+    if (!a64_add_adc_direct_enabled()) {
+        return false;
+    }
+    if (s->base.max_insns - s->base.num_insns <= 0) {
+        return false;
+    }
+    if (!translator_is_same_page(&s->base, pc)) {
+        return false;
+    }
+
+    return a64_insn_is_plain_adc_reg(arm_ldl_code(s->env, &s->base, pc,
+                                                  s->sctlr_b));
+}
 #else
 static bool a64_find_future_bcond_gap(DisasContext *s, uint8_t *gap_insns)
 {
     (void)s;
     (void)gap_insns;
+    return false;
+}
+
+static bool a64_find_adjacent_plain_sbc_cmp(DisasContext *s)
+{
+    (void)s;
+    return false;
+}
+
+static bool a64_find_adjacent_plain_sbc_sub(DisasContext *s)
+{
+    (void)s;
+    return false;
+}
+
+static bool a64_find_adjacent_plain_adc(DisasContext *s)
+{
+    (void)s;
     return false;
 }
 #endif
@@ -1117,6 +1260,7 @@ static void a64_test_cc_cmp_to_bool_i32(TCGv_i32 dst, DisasCompare64 *c64)
     tcg_gen_extrl_i64_i32(dst, tmp);
 }
 
+
 static TCGv_i32 a64_test_cc_bool_i32(DisasContext *s, int cc)
 {
     TCGv_i32 ret = tcg_temp_new_i32();
@@ -1343,6 +1487,62 @@ static void a64_emit_addcio_i32(TCGv_i32 dst, TCGv_i32 lhs, TCGv_i32 rhs)
     tcg_set_insn_param(op, 2, tcgv_i32_arg(rhs));
 }
 
+static void a64_emit_addci_i64(TCGv_i64 dst, TCGv_i64 lhs, TCGv_i64 rhs)
+{
+    TCGOp *op = tcg_emit_op(INDEX_op_addci, 3);
+
+    TCGOP_TYPE(op) = TCG_TYPE_I64;
+    tcg_set_insn_param(op, 0, tcgv_i64_arg(dst));
+    tcg_set_insn_param(op, 1, tcgv_i64_arg(lhs));
+    tcg_set_insn_param(op, 2, tcgv_i64_arg(rhs));
+}
+
+static void a64_emit_addci_i32(TCGv_i32 dst, TCGv_i32 lhs, TCGv_i32 rhs)
+{
+    TCGOp *op = tcg_emit_op(INDEX_op_addci, 3);
+
+    TCGOP_TYPE(op) = TCG_TYPE_I32;
+    tcg_set_insn_param(op, 0, tcgv_i32_arg(dst));
+    tcg_set_insn_param(op, 1, tcgv_i32_arg(lhs));
+    tcg_set_insn_param(op, 2, tcgv_i32_arg(rhs));
+}
+
+static void a64_emit_subbio_i64(TCGv_i64 dst, TCGv_i64 lhs, TCGv_i64 rhs)
+{
+    TCGOp *op;
+
+    g_assert(dst == lhs);
+    op = tcg_emit_op(INDEX_op_subbio, 3);
+    TCGOP_TYPE(op) = TCG_TYPE_I64;
+    tcg_set_insn_param(op, 0, tcgv_i64_arg(dst));
+    tcg_set_insn_param(op, 1, tcgv_i64_arg(lhs));
+    tcg_set_insn_param(op, 2, tcgv_i64_arg(rhs));
+}
+
+static void a64_emit_subbio_i32(TCGv_i32 dst, TCGv_i32 lhs, TCGv_i32 rhs)
+{
+    TCGOp *op;
+
+    g_assert(dst == lhs);
+    op = tcg_emit_op(INDEX_op_subbio, 3);
+    TCGOP_TYPE(op) = TCG_TYPE_I32;
+    tcg_set_insn_param(op, 0, tcgv_i32_arg(dst));
+    tcg_set_insn_param(op, 1, tcgv_i32_arg(lhs));
+    tcg_set_insn_param(op, 2, tcgv_i32_arg(rhs));
+}
+
+static void a64_emit_subbi_i64(TCGv_i64 dst, TCGv_i64 lhs, TCGv_i64 rhs)
+{
+    tcg_gen_mov_i64(dst, lhs);
+    a64_emit_subbio_i64(dst, dst, rhs);
+}
+
+static void a64_emit_subbi_i32(TCGv_i32 dst, TCGv_i32 lhs, TCGv_i32 rhs)
+{
+    tcg_gen_mov_i32(dst, lhs);
+    a64_emit_subbio_i32(dst, dst, rhs);
+}
+
 static void a64_emit_subbo_i64(TCGv_i64 dst, TCGv_i64 lhs, TCGv_i64 rhs)
 {
     TCGOp *op;
@@ -1365,6 +1565,46 @@ static void a64_emit_subbo_i32(TCGv_i32 dst, TCGv_i32 lhs, TCGv_i32 rhs)
     tcg_set_insn_param(op, 0, tcgv_i32_arg(dst));
     tcg_set_insn_param(op, 1, tcgv_i32_arg(dst));
     tcg_set_insn_param(op, 2, tcgv_i32_arg(rhs));
+}
+
+static void a64_emit_x86_sbb_capture_rawflags_i64(TCGv_i64 dst, TCGv_i64 lhs,
+                                                  TCGv_i64 rhs,
+                                                  TCGv_i32 carry_in,
+                                                  TCGv_i32 raw)
+{
+    TCGOp *op;
+    TCGv_i32 raw_tmp = tcg_temp_new_i32();
+
+    tcg_gen_mov_i64(dst, lhs);
+    op = tcg_emit_op(INDEX_op_x86_sbb_capture_rawflags, 5);
+    TCGOP_TYPE(op) = TCG_TYPE_I64;
+    tcg_set_insn_param(op, 0, tcgv_i32_arg(raw_tmp));
+    tcg_set_insn_param(op, 1, tcgv_i64_arg(dst));
+    tcg_set_insn_param(op, 2, tcgv_i64_arg(dst));
+    tcg_set_insn_param(op, 3, tcgv_i64_arg(rhs));
+    tcg_set_insn_param(op, 4, tcgv_i32_arg(carry_in));
+    tcg_gen_mov_i32(cpu_x86_raw_flags, raw_tmp);
+    tcg_gen_mov_i32(raw, raw_tmp);
+}
+
+static void a64_emit_x86_sbb_capture_rawflags_i32(TCGv_i32 dst, TCGv_i32 lhs,
+                                                  TCGv_i32 rhs,
+                                                  TCGv_i32 carry_in,
+                                                  TCGv_i32 raw)
+{
+    TCGOp *op;
+    TCGv_i32 raw_tmp = tcg_temp_new_i32();
+
+    tcg_gen_mov_i32(dst, lhs);
+    op = tcg_emit_op(INDEX_op_x86_sbb_capture_rawflags, 5);
+    TCGOP_TYPE(op) = TCG_TYPE_I32;
+    tcg_set_insn_param(op, 0, tcgv_i32_arg(raw_tmp));
+    tcg_set_insn_param(op, 1, tcgv_i32_arg(dst));
+    tcg_set_insn_param(op, 2, tcgv_i32_arg(dst));
+    tcg_set_insn_param(op, 3, tcgv_i32_arg(rhs));
+    tcg_set_insn_param(op, 4, tcgv_i32_arg(carry_in));
+    tcg_gen_mov_i32(cpu_x86_raw_flags, raw_tmp);
+    tcg_gen_mov_i32(raw, raw_tmp);
 }
 
 static void a64_emit_and_capture_rawflags_i64(TCGv_i64 dst, TCGv_i64 lhs,
@@ -1454,14 +1694,19 @@ static bool a64_try_gen_logic_tst_direct(DisasContext *s, bool sf,
                                          TCGv_i64 lhs, TCGv_i64 rhs)
 {
     if (sf) {
+        TCGv_i64 result = tcg_temp_new_i64();
+
+        tcg_gen_and_i64(result, lhs, rhs);
         a64_emit_test_capture_rawflags_i64(lhs, rhs);
         a64_set_raw_flags_state(s, A64_X86_CC_LOGIC64);
     } else {
         TCGv_i32 lhs32 = tcg_temp_new_i32();
         TCGv_i32 rhs32 = tcg_temp_new_i32();
+        TCGv_i32 result32 = tcg_temp_new_i32();
 
         tcg_gen_extrl_i64_i32(lhs32, lhs);
         tcg_gen_extrl_i64_i32(rhs32, rhs);
+        tcg_gen_and_i32(result32, lhs32, rhs32);
         a64_emit_test_capture_rawflags_i32(lhs32, rhs32);
         a64_set_raw_flags_state(s, A64_X86_CC_LOGIC32);
     }
@@ -1577,6 +1822,72 @@ static void a64_emit_x86_cmp_jcc_i32(int jcc, TCGv_i32 lhs,
     a64_add_label_use(label, op);
 }
 
+static void a64_emit_x86_cmp_sbb_capture_cmp_rawflags_i64(TCGv_i64 dst,
+                                                          TCGv_i64 src,
+                                                          TCGv_i64 cmp_lhs,
+                                                          TCGv_i64 cmp_rhs)
+{
+    TCGOp *op = tcg_emit_op(INDEX_op_x86_cmp_sbb_capture_cmp_rawflags, 6);
+
+    TCGOP_TYPE(op) = TCG_TYPE_I64;
+    tcg_set_insn_param(op, 0, tcgv_i64_arg(dst));
+    tcg_set_insn_param(op, 1, tcgv_i64_arg(dst));
+    tcg_set_insn_param(op, 2, tcgv_i64_arg(src));
+    tcg_set_insn_param(op, 3, tcgv_i64_arg(cmp_lhs));
+    tcg_set_insn_param(op, 4, tcgv_i64_arg(cmp_rhs));
+    tcg_set_insn_param(op, 5, offsetof(CPUARMState, x86_raw_flags));
+}
+
+static void a64_emit_x86_cmp_sbb_capture_cmp_rawflags_i32(TCGv_i32 dst,
+                                                          TCGv_i32 src,
+                                                          TCGv_i32 cmp_lhs,
+                                                          TCGv_i32 cmp_rhs)
+{
+    TCGOp *op = tcg_emit_op(INDEX_op_x86_cmp_sbb_capture_cmp_rawflags, 6);
+
+    TCGOP_TYPE(op) = TCG_TYPE_I32;
+    tcg_set_insn_param(op, 0, tcgv_i32_arg(dst));
+    tcg_set_insn_param(op, 1, tcgv_i32_arg(dst));
+    tcg_set_insn_param(op, 2, tcgv_i32_arg(src));
+    tcg_set_insn_param(op, 3, tcgv_i32_arg(cmp_lhs));
+    tcg_set_insn_param(op, 4, tcgv_i32_arg(cmp_rhs));
+    tcg_set_insn_param(op, 5, offsetof(CPUARMState, x86_raw_flags));
+}
+
+static void a64_emit_x86_add_adc_capture_add_rawflags_i64(TCGv_i64 dst,
+                                                          TCGv_i64 adc_lhs,
+                                                          TCGv_i64 adc_rhs,
+                                                          TCGv_i64 add_lhs,
+                                                          TCGv_i64 add_rhs)
+{
+    TCGOp *op = tcg_emit_op(INDEX_op_x86_add_adc_capture_add_rawflags, 6);
+
+    TCGOP_TYPE(op) = TCG_TYPE_I64;
+    tcg_set_insn_param(op, 0, tcgv_i64_arg(dst));
+    tcg_set_insn_param(op, 1, tcgv_i64_arg(adc_lhs));
+    tcg_set_insn_param(op, 2, tcgv_i64_arg(adc_rhs));
+    tcg_set_insn_param(op, 3, tcgv_i64_arg(add_lhs));
+    tcg_set_insn_param(op, 4, tcgv_i64_arg(add_rhs));
+    tcg_set_insn_param(op, 5, offsetof(CPUARMState, x86_raw_flags));
+}
+
+static void a64_emit_x86_add_adc_capture_add_rawflags_i32(TCGv_i32 dst,
+                                                          TCGv_i32 adc_lhs,
+                                                          TCGv_i32 adc_rhs,
+                                                          TCGv_i32 add_lhs,
+                                                          TCGv_i32 add_rhs)
+{
+    TCGOp *op = tcg_emit_op(INDEX_op_x86_add_adc_capture_add_rawflags_i32, 6);
+
+    TCGOP_TYPE(op) = TCG_TYPE_I32;
+    tcg_set_insn_param(op, 0, tcgv_i32_arg(dst));
+    tcg_set_insn_param(op, 1, tcgv_i32_arg(adc_lhs));
+    tcg_set_insn_param(op, 2, tcgv_i32_arg(adc_rhs));
+    tcg_set_insn_param(op, 3, tcgv_i32_arg(add_lhs));
+    tcg_set_insn_param(op, 4, tcgv_i32_arg(add_rhs));
+    tcg_set_insn_param(op, 5, offsetof(CPUARMState, x86_raw_flags));
+}
+
 static bool a64_try_emit_x86_cmp_bcond(DisasContext *s, int cc,
                                        DisasLabel match, int imm)
 {
@@ -1647,6 +1958,148 @@ static bool a64_try_emit_x86_cmp_bcond(DisasContext *s, int cc,
 #else
 static bool a64_try_emit_x86_cmp_bcond(DisasContext *s, int cc,
                                        DisasLabel match, int imm)
+{
+    return false;
+}
+#endif
+
+#if defined(__i386__) || defined(__x86_64__)
+static bool a64_try_emit_x86_cmp_sbc(DisasContext *s, bool sf,
+                                     TCGv_i64 tcg_rd, TCGv_i64 tcg_rn,
+                                     TCGv_i64 tcg_rm)
+{
+    if (!s->a64_cmp_pending_valid ||
+        s->a64_cmp_pending_rewind != NULL ||
+        !a64_cmp_pending_is_adjacent_to_curr_insn(s) ||
+        s->a64_cmp_pending_cc_op != (sf ? A64_X86_CC_SUB64
+                                       : A64_X86_CC_SUB32)) {
+        return false;
+    }
+
+    if (s->a64_cmp_pending_materialized) {
+        if (!a64_sub_sbc_direct_enabled()) {
+            return false;
+        }
+        a64_cmp_note_consume(s, "SBC-x86-sub-sbb");
+        if (sf) {
+            a64_emit_subbi_i64(tcg_rd, tcg_rn, tcg_rm);
+        } else {
+            TCGv_i32 result32 = tcg_temp_new_i32();
+            TCGv_i32 rn32 = tcg_temp_new_i32();
+            TCGv_i32 rm32 = tcg_temp_new_i32();
+
+            tcg_gen_extrl_i64_i32(rn32, tcg_rn);
+            tcg_gen_extrl_i64_i32(rm32, tcg_rm);
+            a64_emit_subbi_i32(result32, rn32, rm32);
+            tcg_gen_extu_i32_i64(tcg_rd, result32);
+        }
+    } else {
+        if (!a64_cmp_sbc_direct_enabled()) {
+            return false;
+        }
+        a64_cmp_note_consume(s, "SBC-x86-cmp-sbb");
+        if (sf) {
+            tcg_gen_mov_i64(tcg_rd, tcg_rn);
+            a64_emit_x86_cmp_sbb_capture_cmp_rawflags_i64(
+                tcg_rd, tcg_rm,
+                s->a64_cmp_pending_lhs,
+                s->a64_cmp_pending_rhs);
+        } else {
+            TCGv_i32 result32 = tcg_temp_new_i32();
+            TCGv_i32 rm32 = tcg_temp_new_i32();
+            TCGv_i32 lhs32 = tcg_temp_new_i32();
+            TCGv_i32 rhs32 = tcg_temp_new_i32();
+
+            tcg_gen_extrl_i64_i32(result32, tcg_rn);
+            tcg_gen_extrl_i64_i32(rm32, tcg_rm);
+            tcg_gen_extrl_i64_i32(lhs32, s->a64_cmp_pending_lhs);
+            tcg_gen_extrl_i64_i32(rhs32, s->a64_cmp_pending_rhs);
+            a64_emit_x86_cmp_sbb_capture_cmp_rawflags_i32(result32, rm32,
+                                                          lhs32, rhs32);
+            tcg_gen_extu_i32_i64(tcg_rd, result32);
+        }
+    }
+
+    tcg_gen_movi_i32(cpu_x86_cc_op, s->a64_cmp_pending_cc_op);
+    if (s->a64_flags_rep != A64_FLAGS_REP_RAW) {
+        tcg_gen_movi_i32(cpu_x86_flags_valid, A64_X86_FLAGS_RAW);
+    }
+    a64_note_flags_raw_cc_op(s, s->a64_cmp_pending_cc_op);
+    return true;
+}
+#else
+static bool a64_try_emit_x86_cmp_sbc(DisasContext *s, bool sf,
+                                     TCGv_i64 tcg_rd, TCGv_i64 tcg_rn,
+                                     TCGv_i64 tcg_rm)
+{
+    return false;
+}
+#endif
+
+#if defined(__i386__) || defined(__x86_64__)
+static bool a64_try_emit_x86_add_adc(DisasContext *s, bool sf,
+                                     TCGv_i64 tcg_rd, TCGv_i64 tcg_rn,
+                                     TCGv_i64 tcg_rm)
+{
+    if (!a64_add_adc_direct_enabled()) {
+        return false;
+    }
+    if (!s->a64_cmp_pending_valid ||
+        s->a64_cmp_pending_rewind != NULL ||
+        !a64_cmp_pending_is_adjacent_to_curr_insn(s) ||
+        s->a64_cmp_pending_cc_op != (sf ? A64_X86_CC_ADD64
+                                       : A64_X86_CC_ADD32)) {
+        return false;
+    }
+
+    a64_cmp_note_consume(s, "ADC-x86-add-adc");
+    if (s->a64_cmp_pending_materialized) {
+        if (sf) {
+            a64_emit_addci_i64(tcg_rd, tcg_rn, tcg_rm);
+        } else {
+            TCGv_i32 result32 = tcg_temp_new_i32();
+            TCGv_i32 rn32 = tcg_temp_new_i32();
+            TCGv_i32 rm32 = tcg_temp_new_i32();
+
+            tcg_gen_extrl_i64_i32(rn32, tcg_rn);
+            tcg_gen_extrl_i64_i32(rm32, tcg_rm);
+            a64_emit_addci_i32(result32, rn32, rm32);
+            tcg_gen_extu_i32_i64(tcg_rd, result32);
+        }
+    } else {
+        if (sf) {
+            a64_emit_x86_add_adc_capture_add_rawflags_i64(tcg_rd, tcg_rn,
+                                                          tcg_rm,
+                                                          s->a64_cmp_pending_lhs,
+                                                          s->a64_cmp_pending_rhs);
+        } else {
+            TCGv_i32 result32 = tcg_temp_new_i32();
+            TCGv_i32 rn32 = tcg_temp_new_i32();
+            TCGv_i32 rm32 = tcg_temp_new_i32();
+            TCGv_i32 lhs32 = tcg_temp_new_i32();
+            TCGv_i32 rhs32 = tcg_temp_new_i32();
+
+            tcg_gen_extrl_i64_i32(rn32, tcg_rn);
+            tcg_gen_extrl_i64_i32(rm32, tcg_rm);
+            tcg_gen_extrl_i64_i32(lhs32, s->a64_cmp_pending_lhs);
+            tcg_gen_extrl_i64_i32(rhs32, s->a64_cmp_pending_rhs);
+            a64_emit_x86_add_adc_capture_add_rawflags_i32(result32, rn32,
+                                                          rm32, lhs32, rhs32);
+            tcg_gen_extu_i32_i64(tcg_rd, result32);
+        }
+    }
+
+    tcg_gen_movi_i32(cpu_x86_cc_op, s->a64_cmp_pending_cc_op);
+    if (s->a64_flags_rep != A64_FLAGS_REP_RAW) {
+        tcg_gen_movi_i32(cpu_x86_flags_valid, A64_X86_FLAGS_RAW);
+    }
+    a64_note_flags_raw_cc_op(s, s->a64_cmp_pending_cc_op);
+    return true;
+}
+#else
+static bool a64_try_emit_x86_add_adc(DisasContext *s, bool sf,
+                                     TCGv_i64 tcg_rd, TCGv_i64 tcg_rn,
+                                     TCGv_i64 tcg_rm)
 {
     return false;
 }
@@ -2311,6 +2764,118 @@ static void a64_gen_sub_nzcv_bits(int sf, TCGv_i64 dest,
     }
 }
 
+static void a64_gen_sbc_cmp_rhs(bool sf, TCGv_i64 out, TCGv_i64 rhs,
+                                TCGv_i32 carry_in);
+
+static void gen_add64_CC_split(TCGv_i64 dest, TCGv_i64 t0, TCGv_i64 t1)
+{
+    TCGv_i64 result = tcg_temp_new_i64();
+    TCGv_i64 flag = tcg_temp_new_i64();
+    TCGv_i64 tmp = tcg_temp_new_i64();
+
+    tcg_gen_movi_i64(tmp, 0);
+    tcg_gen_add2_i64(result, flag, t0, tmp, t1, tmp);
+
+    tcg_gen_extrl_i64_i32(cpu_CF, flag);
+    gen_set_NZ64(result);
+
+    tcg_gen_xor_i64(flag, result, t0);
+    tcg_gen_xor_i64(tmp, t0, t1);
+    tcg_gen_andc_i64(flag, flag, tmp);
+    tcg_gen_extrh_i64_i32(cpu_VF, flag);
+
+    tcg_gen_mov_i64(dest, result);
+}
+
+static void gen_add32_CC_split(TCGv_i64 dest, TCGv_i64 t0, TCGv_i64 t1)
+{
+    TCGv_i32 t0_32 = tcg_temp_new_i32();
+    TCGv_i32 t1_32 = tcg_temp_new_i32();
+    TCGv_i32 tmp = tcg_temp_new_i32();
+
+    tcg_gen_movi_i32(tmp, 0);
+    tcg_gen_extrl_i64_i32(t0_32, t0);
+    tcg_gen_extrl_i64_i32(t1_32, t1);
+    tcg_gen_add2_i32(cpu_NF, cpu_CF, t0_32, tmp, t1_32, tmp);
+    tcg_gen_mov_i32(cpu_ZF, cpu_NF);
+    tcg_gen_xor_i32(cpu_VF, cpu_NF, t0_32);
+    tcg_gen_xor_i32(tmp, t0_32, t1_32);
+    tcg_gen_andc_i32(cpu_VF, cpu_VF, tmp);
+    tcg_gen_extu_i32_i64(dest, cpu_NF);
+}
+
+static void gen_sub64_CC_split(TCGv_i64 dest, TCGv_i64 t0, TCGv_i64 t1)
+{
+    TCGv_i64 result = tcg_temp_new_i64();
+    TCGv_i64 flag = tcg_temp_new_i64();
+    TCGv_i64 tmp = tcg_temp_new_i64();
+
+    tcg_gen_sub_i64(result, t0, t1);
+    gen_set_NZ64(result);
+
+    tcg_gen_setcond_i64(TCG_COND_GEU, flag, t0, t1);
+    tcg_gen_extrl_i64_i32(cpu_CF, flag);
+
+    tcg_gen_xor_i64(flag, result, t0);
+    tcg_gen_xor_i64(tmp, t0, t1);
+    tcg_gen_and_i64(flag, flag, tmp);
+    tcg_gen_extrh_i64_i32(cpu_VF, flag);
+    tcg_gen_mov_i64(dest, result);
+}
+
+static void gen_sub32_CC_split(TCGv_i64 dest, TCGv_i64 t0, TCGv_i64 t1)
+{
+    TCGv_i32 t0_32 = tcg_temp_new_i32();
+    TCGv_i32 t1_32 = tcg_temp_new_i32();
+    TCGv_i32 tmp = tcg_temp_new_i32();
+
+    tcg_gen_extrl_i64_i32(t0_32, t0);
+    tcg_gen_extrl_i64_i32(t1_32, t1);
+    tcg_gen_sub_i32(cpu_NF, t0_32, t1_32);
+    tcg_gen_mov_i32(cpu_ZF, cpu_NF);
+    tcg_gen_setcond_i32(TCG_COND_GEU, cpu_CF, t0_32, t1_32);
+    tcg_gen_xor_i32(cpu_VF, cpu_NF, t0_32);
+    tcg_gen_xor_i32(tmp, t0_32, t1_32);
+    tcg_gen_and_i32(cpu_VF, cpu_VF, tmp);
+    tcg_gen_extu_i32_i64(dest, cpu_NF);
+}
+
+static void gen_adc_CC_split(int sf, TCGv_i64 dest, TCGv_i64 t0,
+                             TCGv_i64 t1, TCGv_i32 carry_in)
+{
+    if (sf) {
+        TCGv_i64 result = tcg_temp_new_i64();
+        TCGv_i64 cf_64 = tcg_temp_new_i64();
+        TCGv_i64 vf_64 = tcg_temp_new_i64();
+        TCGv_i64 tmp = tcg_temp_new_i64();
+
+        tcg_gen_extu_i32_i64(cf_64, carry_in);
+        tcg_gen_addcio_i64(result, cf_64, t0, t1, cf_64);
+        tcg_gen_extrl_i64_i32(cpu_CF, cf_64);
+        gen_set_NZ64(result);
+
+        tcg_gen_xor_i64(vf_64, result, t0);
+        tcg_gen_xor_i64(tmp, t0, t1);
+        tcg_gen_andc_i64(vf_64, vf_64, tmp);
+        tcg_gen_extrh_i64_i32(cpu_VF, vf_64);
+        tcg_gen_mov_i64(dest, result);
+    } else {
+        TCGv_i32 t0_32 = tcg_temp_new_i32();
+        TCGv_i32 t1_32 = tcg_temp_new_i32();
+        TCGv_i32 tmp = tcg_temp_new_i32();
+
+        tcg_gen_extrl_i64_i32(t0_32, t0);
+        tcg_gen_extrl_i64_i32(t1_32, t1);
+        tcg_gen_addcio_i32(cpu_NF, cpu_CF, t0_32, t1_32, carry_in);
+
+        tcg_gen_mov_i32(cpu_ZF, cpu_NF);
+        tcg_gen_xor_i32(cpu_VF, cpu_NF, t0_32);
+        tcg_gen_xor_i32(tmp, t0_32, t1_32);
+        tcg_gen_andc_i32(cpu_VF, cpu_VF, tmp);
+        tcg_gen_extu_i32_i64(dest, cpu_NF);
+    }
+}
+
 /* Set NZCV as for a logical operation: NZ as per result, CV cleared. */
 static inline void gen_logic_CC(DisasContext *s, int sf, TCGv_i64 result)
 {
@@ -2337,20 +2902,16 @@ static inline void gen_logic_CC(DisasContext *s, int sf, TCGv_i64 result)
         return;
     }
 #endif
-    TCGv_i32 n = tcg_temp_new_i32();
-    TCGv_i32 z = tcg_temp_new_i32();
-    TCGv_i32 c = tcg_constant_i32(0);
-    TCGv_i32 v = tcg_constant_i32(0);
-
+    a64_invalidate_x86_flags(s);
+    a64_note_flags_split(s);
     if (sf) {
-        a64_gen_nz64_bits(n, z, result);
+        gen_set_NZ64(result);
     } else {
-        TCGv_i32 result32 = tcg_temp_new_i32();
-
-        tcg_gen_extrl_i64_i32(result32, result);
-        a64_gen_nz32_bits(n, z, result32);
+        tcg_gen_extrl_i64_i32(cpu_ZF, result);
+        tcg_gen_mov_i32(cpu_NF, cpu_ZF);
     }
-    a64_write_raw_flags_from_bits(s, n, z, c, v);
+    tcg_gen_movi_i32(cpu_CF, 0);
+    tcg_gen_movi_i32(cpu_VF, 0);
 }
 
 static void gen_add_CC(DisasContext *s, int sf, TCGv_i64 dest,
@@ -2384,13 +2945,13 @@ static void gen_add_CC(DisasContext *s, int sf, TCGv_i64 dest,
         return;
     }
 #endif
-    TCGv_i32 n = tcg_temp_new_i32();
-    TCGv_i32 z = tcg_temp_new_i32();
-    TCGv_i32 c = tcg_temp_new_i32();
-    TCGv_i32 v = tcg_temp_new_i32();
-
-    a64_gen_add_nzcv_bits(sf, dest, n, z, c, v, t0, t1);
-    a64_write_raw_flags_from_bits(s, n, z, c, v);
+    a64_invalidate_x86_flags(s);
+    a64_note_flags_split(s);
+    if (sf) {
+        gen_add64_CC_split(dest, t0, t1);
+    } else {
+        gen_add32_CC_split(dest, t0, t1);
+    }
 }
 
 static void gen_sub_CC(DisasContext *s, int sf, TCGv_i64 dest,
@@ -2424,18 +2985,18 @@ static void gen_sub_CC(DisasContext *s, int sf, TCGv_i64 dest,
         return;
     }
 #endif
-    TCGv_i32 n = tcg_temp_new_i32();
-    TCGv_i32 z = tcg_temp_new_i32();
-    TCGv_i32 c = tcg_temp_new_i32();
-    TCGv_i32 v = tcg_temp_new_i32();
-
-    a64_gen_sub_nzcv_bits(sf, dest, n, z, c, v, t0, t1);
-    a64_write_raw_flags_from_bits(s, n, z, c, v);
+    a64_invalidate_x86_flags(s);
+    a64_note_flags_split(s);
+    if (sf) {
+        gen_sub64_CC_split(dest, t0, t1);
+    } else {
+        gen_sub32_CC_split(dest, t0, t1);
+    }
 }
 
 /* dest = T0 + T1 + carry_in; do not compute flags. */
-static void gen_adc(int sf, TCGv_i64 dest, TCGv_i64 t0, TCGv_i64 t1,
-                    TCGv_i32 carry_in)
+static void gen_adc(int sf, TCGv_i64 dest,
+                    TCGv_i64 t0, TCGv_i64 t1, TCGv_i32 carry_in)
 {
 #if defined(__i386__) || defined(__x86_64__)
     if (sf) {
@@ -2472,6 +3033,53 @@ static void gen_adc(int sf, TCGv_i64 dest, TCGv_i64 t0, TCGv_i64 t1,
     }
 }
 
+/* dest = T0 - T1 - !carry_in; do not compute flags. */
+static void gen_sbc(int sf, TCGv_i64 dest,
+                    TCGv_i64 t0, TCGv_i64 t1, TCGv_i32 carry_in)
+{
+#if defined(__i386__) || defined(__x86_64__)
+    TCGv_i32 borrow_in = tcg_temp_new_i32();
+
+    tcg_gen_xori_i32(borrow_in, carry_in, 1);
+    if (sf) {
+        TCGv_i64 bi64 = tcg_temp_new_i64();
+        TCGv_i64 discard = tcg_temp_new_i64();
+
+        tcg_gen_extu_i32_i64(bi64, borrow_in);
+        tcg_gen_mov_i64(dest, t0);
+        a64_emit_subbo_i64(discard, tcg_constant_i64(0), bi64);
+        a64_emit_subbio_i64(dest, dest, t1);
+        return;
+    } else {
+        TCGv_i32 t0_32 = tcg_temp_new_i32();
+        TCGv_i32 t1_32 = tcg_temp_new_i32();
+        TCGv_i32 discard = tcg_temp_new_i32();
+        TCGv_i32 result = tcg_temp_new_i32();
+
+        tcg_gen_extrl_i64_i32(t0_32, t0);
+        tcg_gen_extrl_i64_i32(t1_32, t1);
+        tcg_gen_mov_i32(result, t0_32);
+        a64_emit_subbo_i32(discard, tcg_constant_i32(0), borrow_in);
+        a64_emit_subbio_i32(result, result, t1_32);
+        tcg_gen_extu_i32_i64(dest, result);
+        return;
+    }
+#endif
+    {
+        TCGv_i64 flag = tcg_temp_new_i64();
+        TCGv_i64 not_t1 = tcg_temp_new_i64();
+
+        tcg_gen_extu_i32_i64(flag, carry_in);
+        tcg_gen_not_i64(not_t1, t1);
+        tcg_gen_add_i64(dest, t0, not_t1);
+        tcg_gen_add_i64(dest, dest, flag);
+
+        if (!sf) {
+            tcg_gen_ext32u_i64(dest, dest);
+        }
+    }
+}
+
 /* dest = T0 + T1 + carry_in; compute C, N, V and Z flags. */
 static void gen_adc_CC(DisasContext *s, int sf, TCGv_i64 dest,
                        TCGv_i64 t0, TCGv_i64 t1, TCGv_i32 carry_in,
@@ -2480,34 +3088,46 @@ static void gen_adc_CC(DisasContext *s, int sf, TCGv_i64 dest,
 #if defined(__i386__) || defined(__x86_64__)
     if (allow_direct) {
         if (sf) {
-            TCGv_i64 ci64 = tcg_temp_new_i64();
-            TCGv_i64 discard = tcg_temp_new_i64();
             TCGv_i64 result = tcg_temp_new_i64();
             TCGv_i32 raw = tcg_temp_new_i32();
 
-            tcg_gen_extu_i32_i64(ci64, carry_in);
-            tcg_gen_mov_i64(result, t0);
-            a64_emit_addco_i64(discard, ci64, tcg_constant_i64(-1));
-            a64_emit_addcio_i64(result, result, t1);
-            a64_emit_x86_capture_rawflags(raw);
-            tcg_gen_mov_i32(cpu_x86_raw_flags, raw);
+            if (is_sub) {
+                a64_emit_x86_sbb_capture_rawflags_i64(result, t0, t1,
+                                                      carry_in, raw);
+            } else {
+                TCGv_i64 ci64 = tcg_temp_new_i64();
+                TCGv_i64 discard = tcg_temp_new_i64();
+
+                tcg_gen_extu_i32_i64(ci64, carry_in);
+                tcg_gen_mov_i64(result, t0);
+                a64_emit_addco_i64(discard, ci64, tcg_constant_i64(-1));
+                a64_emit_addcio_i64(result, result, t1);
+                a64_emit_x86_capture_rawflags(raw);
+                tcg_gen_mov_i32(cpu_x86_raw_flags, raw);
+            }
             tcg_gen_mov_i64(dest, result);
             a64_set_raw_flags_state(s, is_sub ? A64_X86_CC_SBC64
                                               : A64_X86_CC_ADC64);
         } else {
             TCGv_i32 t0_32 = tcg_temp_new_i32();
             TCGv_i32 t1_32 = tcg_temp_new_i32();
-            TCGv_i32 discard = tcg_temp_new_i32();
             TCGv_i32 result = tcg_temp_new_i32();
             TCGv_i32 raw = tcg_temp_new_i32();
 
             tcg_gen_extrl_i64_i32(t0_32, t0);
             tcg_gen_extrl_i64_i32(t1_32, t1);
-            tcg_gen_mov_i32(result, t0_32);
-            a64_emit_addco_i32(discard, carry_in, tcg_constant_i32(-1));
-            a64_emit_addcio_i32(result, result, t1_32);
-            a64_emit_x86_capture_rawflags(raw);
-            tcg_gen_mov_i32(cpu_x86_raw_flags, raw);
+            if (is_sub) {
+                a64_emit_x86_sbb_capture_rawflags_i32(result, t0_32, t1_32,
+                                                      carry_in, raw);
+            } else {
+                TCGv_i32 discard = tcg_temp_new_i32();
+
+                tcg_gen_mov_i32(result, t0_32);
+                a64_emit_addco_i32(discard, carry_in, tcg_constant_i32(-1));
+                a64_emit_addcio_i32(result, result, t1_32);
+                a64_emit_x86_capture_rawflags(raw);
+                tcg_gen_mov_i32(cpu_x86_raw_flags, raw);
+            }
             tcg_gen_extu_i32_i64(dest, result);
             a64_set_raw_flags_state(s, is_sub ? A64_X86_CC_SBC32
                                               : A64_X86_CC_ADC32);
@@ -2515,48 +3135,37 @@ static void gen_adc_CC(DisasContext *s, int sf, TCGv_i64 dest,
         return;
     }
 #endif
-    TCGv_i32 n = tcg_temp_new_i32();
-    TCGv_i32 z = tcg_temp_new_i32();
-    TCGv_i32 c = tcg_temp_new_i32();
-    TCGv_i32 v = tcg_temp_new_i32();
+    a64_invalidate_x86_flags(s);
+    a64_note_flags_split(s);
+    if (is_sub) {
+        TCGv_i64 not_t1 = tcg_temp_new_i64();
 
-    if (sf) {
-        TCGv_i64 result = tcg_temp_new_i64();
-        TCGv_i64 cf_in_64 = tcg_temp_new_i64();
-        TCGv_i64 cf_out_64 = tcg_temp_new_i64();
-        TCGv_i64 vf_64 = tcg_temp_new_i64();
-        TCGv_i64 tmp = tcg_temp_new_i64();
-
-        tcg_gen_extu_i32_i64(cf_in_64, carry_in);
-        tcg_gen_addcio_i64(result, cf_out_64, t0, t1, cf_in_64);
-        tcg_gen_extrl_i64_i32(c, cf_out_64);
-        a64_gen_nz64_bits(n, z, result);
-
-        tcg_gen_xor_i64(vf_64, result, t0);
-        tcg_gen_xor_i64(tmp, t0, t1);
-        tcg_gen_andc_i64(vf_64, vf_64, tmp);
-        tcg_gen_extrh_i64_i32(v, vf_64);
-        tcg_gen_shri_i32(v, v, 31);
-
-        tcg_gen_mov_i64(dest, result);
+        tcg_gen_not_i64(not_t1, t1);
+        gen_adc_CC_split(sf, dest, t0, not_t1, carry_in);
     } else {
-        TCGv_i32 t0_32 = tcg_temp_new_i32();
-        TCGv_i32 t1_32 = tcg_temp_new_i32();
-        TCGv_i32 result = tcg_temp_new_i32();
-        TCGv_i32 tmp = tcg_temp_new_i32();
-
-        tcg_gen_extrl_i64_i32(t0_32, t0);
-        tcg_gen_extrl_i64_i32(t1_32, t1);
-        tcg_gen_addcio_i32(result, c, t0_32, t1_32, carry_in);
-
-        a64_gen_nz32_bits(n, z, result);
-        tcg_gen_xor_i32(v, result, t0_32);
-        tcg_gen_xor_i32(tmp, t0_32, t1_32);
-        tcg_gen_andc_i32(v, v, tmp);
-        tcg_gen_shri_i32(v, v, 31);
-        tcg_gen_extu_i32_i64(dest, result);
+        gen_adc_CC_split(sf, dest, t0, t1, carry_in);
     }
-    a64_write_raw_flags_from_bits(s, n, z, c, v);
+}
+
+static void a64_gen_sbc_cmp_rhs(bool sf, TCGv_i64 out, TCGv_i64 rhs,
+                                TCGv_i32 carry_in)
+{
+    TCGv_i32 borrow_in = tcg_temp_new_i32();
+
+    tcg_gen_xori_i32(borrow_in, carry_in, 1);
+    if (sf) {
+        TCGv_i64 borrow64 = tcg_temp_new_i64();
+
+        tcg_gen_extu_i32_i64(borrow64, borrow_in);
+        tcg_gen_add_i64(out, rhs, borrow64);
+    } else {
+        TCGv_i32 rhs32 = tcg_temp_new_i32();
+        TCGv_i32 out32 = tcg_temp_new_i32();
+
+        tcg_gen_extrl_i64_i32(rhs32, rhs);
+        tcg_gen_add_i32(out32, rhs32, borrow_in);
+        tcg_gen_extu_i32_i64(out, out32);
+    }
 }
 
 /*
@@ -6690,7 +7299,8 @@ static bool gen_rri_log(DisasContext *s, arg_rri_log *a, bool set_cc,
     tcg_rn = cpu_reg(s, a->rn);
 
 #if defined(__i386__) || defined(__x86_64__)
-    if (set_cc && fn == tcg_gen_andi_i64 && a64_logic_imm_can_direct(a->sf, imm)) {
+    if (set_cc &&
+        fn == tcg_gen_andi_i64 && a64_logic_imm_can_direct(a->sf, imm)) {
         TCGv_i64 tcg_imm = tcg_constant_i64(imm);
 
         if (a->rd == 31) {
@@ -9036,7 +9646,6 @@ static bool trans_FCSEL(DisasContext *s, arg_FCSEL *a)
     t_false = tcg_temp_new_i64();
     read_vec_element(s, t_true, a->rn, 0, a->esz);
     read_vec_element(s, t_false, a->rm, 0, a->esz);
-
     a64_test_cc(s, &c, a->cond);
     tcg_gen_movcond_i64(c.cond, t_true, c.value, tcg_constant_i64(0),
                         t_true, t_false);
@@ -10398,11 +11007,7 @@ static bool do_logic_reg(DisasContext *s, arg_logic_shift *a,
 #endif
     }
 
-    if (inverted) {
-        tcg_gen_and_i64(tcg_rd, tcg_rn, tcg_rm);
-    } else {
-        fn(tcg_rd, tcg_rn, tcg_rm);
-    }
+    fn(tcg_rd, tcg_rn, tcg_rm);
     if (!a->sf) {
         tcg_gen_ext32u_i64(tcg_rd, tcg_rd);
     }
@@ -10515,6 +11120,10 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
                           bool sub_op, bool setflags)
 {
     bool lazy_bcond_cmp = false;
+    bool lazy_sbc_cmp = false;
+    bool lazy_adc_add = false;
+    bool materialized_sbc_sub = false;
+    bool materialized_adc_add = false;
     uint8_t gap_insns = 0;
     TCGv_i64 tcg_rd = NULL, tcg_rn, tcg_rm, tcg_result;
 
@@ -10524,9 +11133,20 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
 
     if (setflags && sub_op && a->rd == 31) {
         lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns);
+        if (!lazy_bcond_cmp) {
+            lazy_sbc_cmp = a64_find_adjacent_plain_sbc_cmp(s);
+        }
+    } else if (setflags && sub_op) {
+        materialized_sbc_sub = a64_find_adjacent_plain_sbc_sub(s);
+    } else if (setflags && !sub_op) {
+        if (a->rd == 31) {
+            lazy_adc_add = a64_find_adjacent_plain_adc(s);
+        } else {
+            materialized_adc_add = a64_find_adjacent_plain_adc(s);
+        }
     }
 
-    if (!setflags || !lazy_bcond_cmp) {
+    if (!setflags || (!lazy_bcond_cmp && !lazy_sbc_cmp && !lazy_adc_add)) {
         tcg_rd = cpu_reg(s, a->rd);
     }
     tcg_rn = read_cpu_reg(s, a->rn, a->sf);
@@ -10543,15 +11163,18 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
         }
     } else {
         if (sub_op) {
-            if (!lazy_bcond_cmp) {
+            if (!lazy_bcond_cmp && !lazy_sbc_cmp) {
                 gen_sub_CC(s, a->sf, tcg_result, tcg_rn, tcg_rm, true);
             }
         } else {
-            gen_add_CC(s, a->sf, tcg_result, tcg_rn, tcg_rm, a->rd != 31);
+            if (!lazy_adc_add) {
+                gen_add_CC(s, a->sf, tcg_result, tcg_rn, tcg_rm,
+                           a->rd != 31);
+            }
         }
     }
 
-    if (!setflags || !lazy_bcond_cmp) {
+    if (!setflags || (!lazy_bcond_cmp && !lazy_sbc_cmp && !lazy_adc_add)) {
         if (a->sf) {
             tcg_gen_mov_i64(tcg_rd, tcg_result);
         } else {
@@ -10559,13 +11182,19 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
         }
     }
 
-    if (lazy_bcond_cmp) {
+    if (lazy_bcond_cmp || lazy_sbc_cmp || lazy_adc_add ||
+        materialized_sbc_sub ||
+        materialized_adc_add) {
         a64_record_cmp_for_bcond(s, a->sf, tcg_rn, tcg_rm,
                                  NULL,
                                  tcg_last_op(),
-                                 a->sf ? A64_X86_CC_SUB64
-                                       : A64_X86_CC_SUB32,
-                                 gap_insns);
+                                 sub_op ? (a->sf ? A64_X86_CC_SUB64
+                                                 : A64_X86_CC_SUB32)
+                                         : (a->sf ? A64_X86_CC_ADD64
+                                                 : A64_X86_CC_ADD32),
+                                 lazy_bcond_cmp ? gap_insns : 0);
+        s->a64_cmp_pending_materialized = materialized_adc_add ||
+                                          materialized_sbc_sub;
     }
     return true;
 }
@@ -10640,26 +11269,56 @@ TRANS(UMSUBL, do_muladd, a, true, true, MO_UL)
 static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
                        bool is_sub, bool setflags)
 {
-    TCGv_i32 carry = tcg_temp_new_i32();
-    TCGv_i64 tcg_y, tcg_rn, tcg_rd;
+    TCGv_i32 carry;
+    TCGv_i64 tcg_rm, tcg_y, tcg_rn, tcg_rd;
+    bool lazy_bcond_cmp = false;
+    uint8_t gap_insns = 0;
 
-    a64_get_current_carry_flag(s, carry);
+    if (setflags && is_sub && a->rd == 31) {
+        lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns);
+    }
 
     tcg_rd = cpu_reg(s, a->rd);
     tcg_rn = cpu_reg(s, a->rn);
+    tcg_rm = cpu_reg(s, a->rm);
+    tcg_y = tcg_rm;
 
-    if (is_sub) {
-        tcg_y = tcg_temp_new_i64();
-        tcg_gen_not_i64(tcg_y, cpu_reg(s, a->rm));
-    } else {
-        tcg_y = cpu_reg(s, a->rm);
+    if (!setflags && is_sub &&
+        a64_try_emit_x86_cmp_sbc(s, a->sf, tcg_rd, tcg_rn, tcg_rm)) {
+        return true;
+    }
+    if (!setflags && !is_sub &&
+        a64_try_emit_x86_add_adc(s, a->sf, tcg_rd, tcg_rn, tcg_rm)) {
+        return true;
     }
 
+    carry = tcg_temp_new_i32();
+    a64_get_current_carry_flag(s, carry);
+
     if (setflags) {
-        gen_adc_CC(s, a->sf, tcg_rd, tcg_rn, tcg_y, carry,
-                   is_sub, a->rd != 31);
+        if (!lazy_bcond_cmp) {
+            bool allow_direct = is_sub || a->rd != 31;
+
+            gen_adc_CC(s, a->sf, tcg_rd, tcg_rn, tcg_y, carry,
+                       is_sub, allow_direct);
+        }
     } else {
-        gen_adc(a->sf, tcg_rd, tcg_rn, tcg_y, carry);
+        if (is_sub) {
+            gen_sbc(a->sf, tcg_rd, tcg_rn, tcg_rm, carry);
+        } else {
+            gen_adc(a->sf, tcg_rd, tcg_rn, tcg_rm, carry);
+        }
+    }
+
+    if (lazy_bcond_cmp) {
+        TCGv_i64 rhs_eff = tcg_temp_new_i64();
+
+        a64_gen_sbc_cmp_rhs(a->sf, rhs_eff, tcg_y, carry);
+        a64_record_cmp_for_bcond(s, a->sf, tcg_rn, rhs_eff,
+                                 NULL, tcg_last_op(),
+                                 a->sf ? A64_X86_CC_SUB64
+                                       : A64_X86_CC_SUB32,
+                                 gap_insns);
     }
     return true;
 }
@@ -10800,7 +11459,6 @@ static bool trans_CSEL(DisasContext *s, arg_CSEL *a)
     TCGv_i64 tcg_rd = cpu_reg(s, a->rd);
     TCGv_i64 zero = tcg_constant_i64(0);
     DisasCompare64 c;
-
     a64_test_cc(s, &c, a->cond);
 
     if (a->rn == 31 && a->rm == 31 && (a->else_inc ^ a->else_inv)) {
@@ -12337,6 +12995,7 @@ static void aarch64_tr_init_disas_context(DisasContextBase *dcbase,
     dc->a64_cmp_pending_valid = false;
     dc->a64_cmp_pending_keep = false;
     dc->a64_cmp_pending_sf = false;
+    dc->a64_cmp_pending_materialized = false;
     dc->a64_cmp_pending_lhs = NULL;
     dc->a64_cmp_pending_rhs = NULL;
     dc->a64_cmp_pending_rewind = NULL;
@@ -12510,6 +13169,7 @@ static void aarch64_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
     if (!s->a64_cmp_pending_keep) {
         a64_cmp_note_drop(s);
         s->a64_cmp_pending_valid = false;
+        s->a64_cmp_pending_materialized = false;
         s->a64_cmp_pending_lhs = NULL;
         s->a64_cmp_pending_rhs = NULL;
         s->a64_cmp_pending_rewind = NULL;
