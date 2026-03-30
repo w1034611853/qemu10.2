@@ -2763,3 +2763,268 @@ fresh 跑过：
 
 - 再往更中性的 pending-producer metadata 收一小步
 - 或者开始评估下一类相邻 producer/consumer 直通
+
+### 2026-03-30 Step 21：收窄 immediate add-side compare-like 32-bit 直通
+
+这一步不是推翻 immediate-form `ADDS/SUBS/CMN/CMP -> ADC/SBC`，而是把已经证实
+拖慢的一条路径单独裁掉：
+
+- 保留：
+  - `CMN64 #imm -> ADC64`
+  - `CMP #imm -> SBC`
+  - `ADDS rd,#imm -> ADC`
+  - `SUBS rd,#imm -> SBC`
+- 收窄：
+  - `CMN32 / ADDS xzr,#imm -> ADC32` 不再走 compare-like direct producer
+
+#### 为什么要收窄
+
+full-scope immediate A/B 里，只有 `cmnadc32_imm` 是稳定负回退，而且幅度明显：
+
+- `200000000` iterations：
+  - 开启：`0.41 0.41 0.43`
+  - 关闭：`0.35 0.35 0.36`
+- `400000000` iterations：
+  - 开启：`0.83 0.86`
+  - 关闭：`0.69 0.70`
+
+判断：
+
+- 问题不是 immediate 方向错了
+- 而是当前 i32 compare-like add immediate 这条实现里，raw-flags capture
+  胶水成本高于省下来的 carry decode
+- 所以不值得把它和其余正收益路径绑在一起收
+
+#### 实现收口
+
+- `do_addsub_imm()` 里 compare-like immediate add 现在只在 `sf=1` 时记录
+  `lazy_adc_add`
+- 也就是：
+  - `CMN64 #imm -> ADC64` 仍可命中 direct
+  - `CMN32 #imm -> ADC32` 直接回旧 lowering
+- `adc-sbc-host-direct.S` 里的 `cmn-imm->adc32` guest case 保留，继续做语义
+  smoke coverage
+- `check-adc-sbc-host-direct.sh` 不再要求它必须出现 host `addl + adcl`
+
+#### 收窄后 fresh 验证
+
+- `ninja -C build-aarch64-linux-user qemu-aarch64`
+- `tests/tcg/aarch64/check-adc-sbc-host-direct.sh ... adc-sbc-host-direct`
+- `build-aarch64-linux-user/qemu-aarch64 -L /usr/aarch64-linux-gnu .../nzcv-status4`
+- `build-aarch64-linux-user/qemu-aarch64 -L /usr/aarch64-linux-gnu .../cmpstress-o3`
+- `make -C build-aarch64-linux-user/tests/tcg/aarch64-linux-user run-adcsbc-bench`
+
+结果：
+
+- codegen / focused correctness：全绿
+- `nzcv-status4`：`PASS`
+- `cmpstress-o3`：`cmpstress-o3 0x03c9d1a1e84724d4`
+- `run-adcsbc-bench`：通过
+
+#### 收窄后 immediate add-side A/B
+
+仍然只切 `QEMU_A64_DISABLE_ADD_ADC_DIRECT=1`。
+
+`200000000` iterations：
+
+- `cmnadc64_imm`
+  - 开启：`0.33 0.34 0.33`
+  - 关闭：`0.36 0.38 0.37`
+  - median：`0.33` vs `0.37`
+  - 开启 direct 快约 `10.8%`
+- `cmnadc32_imm`
+  - 开启：`0.35 0.35 0.35`
+  - 关闭：`0.35 0.34 0.34`
+  - median：`0.35` vs `0.34`
+  - 已回到同量级波动区，不再出现收窄前那种稳定双位数负回退
+
+`400000000` iterations spot-check：
+
+- `cmnadc64_imm`
+  - 开启：`0.65 0.65`
+  - 关闭：`0.72 0.74`
+- `cmnadc32_imm`
+  - 开启：`0.71 0.71`
+  - 关闭：`0.69 0.68`
+  - 同档位波动，视为已退出 perf hard gate 风险区
+
+#### 当前判断
+
+- 这一步收的是“其余 immediate-form direct path”，不是强行把
+  `CMN32 #imm -> ADC32` 也塞进去
+- 收窄后 immediate add-side 不再有明显 blocker
+- 下一拍可以开始看 `do_addsub_ext()` 这类还没覆盖的 producer 形态
+
+### 2026-03-30 Step 22：完成 extended-register `ADDS/SUBS/CMN/CMP -> ADC/SBC` 直通
+
+这一步把 `do_addsub_ext()` 这档的空白位补齐了，并且把 ext-form 的 codegen、
+语义回归、benchmark、perf hard gate 一起收完。
+
+#### 实现范围
+
+- compare-like ext producer：
+  - `CMN64/32 <ext> -> plain ADC`
+  - `CMP64/32 <ext> -> plain SBC`
+- materialized ext producer：
+  - `ADDS64/32 rd,<ext> -> plain ADC`
+  - `SUBS64/32 rd,<ext> -> plain SBC`
+- `SUBS xzr,<ext> -> future B.cond` 继续优先于相邻 plain `SBC`
+
+前端接法：
+
+- `do_addsub_ext()` 现在对齐 register-form：
+  - compare-like sub-side：先 `a64_find_future_bcond_gap()`，只有没命中
+    `B.cond` fast path 时才继续看相邻 plain `SBC`
+  - compare-like add-side：看相邻 plain `ADC`
+  - materialized add/sub：继续走现有 `gen_add_CC()` / `gen_sub_CC()`
+- compare-like 命中后跳过旧 `gen_add_CC()` / `gen_sub_CC()` lowering
+- ext rhs 继续直接记录 `ext_and_shift_reg()` 之后的 live `tcg_rm`
+- 仍沿用现有 `pending_cc.kind + cc_op + lhs/rhs` 骨架，不新增 env gate
+
+#### codegen / oracle 收口
+
+- `adc-sbc-host-direct` 现在对 ext compare-like / materialized 家族都做 hard gate
+- `CMN-ext->ADC32` 的 gate 额外拒绝：
+  - `push/pop`
+  - `shrl/andl/xorl/notl/setcc`
+  避免“看起来有 `addl + adcl`，但中间又偷偷重建 carry”的误绿
+- `CMP-ext->SBC` / `CMP-ext->SBC32` 的 gate 额外拒绝 `subq/subl` 借位播种形状
+- `cmp-bcond-ext-host-direct` 现在要求：
+  - host block 中出现 `cmpq/cmpl`
+  - 最终出现 `jcc`
+  - 从首次 `cmp` 到首个 `jcc` 之间，不允许 `test`、第二个 `cmp`、
+    `shr/and/xor/not`、一般 `setcc`
+  - 但允许当前正确路径需要的 raw-flags capture：`push/lahf/seto/pop`
+
+也就是说，ext `B.cond` 现在保护的是：
+
+- `cmp`
+- raw capture
+- 直接 `jcc`
+
+而不是退回 canonical flags decode 再分支。
+
+#### 语义回归
+
+`nzcv-status4` 新增了 ext-form 语义覆盖：
+
+- `0xa2` / `0xa3`
+  - `CMN64/32 ext -> ADC`
+- `0xa4` / `0xa5`
+  - `ADDS64/32 ext rd -> ADC`
+- `0xa6` / `0xa7`
+  - `CMP64/32 ext -> SBC`
+- `0xa8` / `0xa9`
+  - `SUBS64/32 ext rd -> SBC`
+- `0xaa`
+  - `SUBS xzr,<ext> -> shared B.eq consumer`
+
+这一组最后没有暴露新的前端语义 bug，所以 Task 6 只需要改测试，不需要再动
+`translate-a64.c`。
+
+#### benchmark
+
+`adcsbc-bench` 新增了 8 个 `_ext` dedicated mode：
+
+- `cmnadc64_ext`
+- `cmnadc32_ext`
+- `addsadc64_ext`
+- `addsadc32_ext`
+- `cmpsbc64_ext`
+- `cmpsbc32_ext`
+- `subsbc64_ext`
+- `subsbc32_ext`
+
+并且确认了它们不是“先手工扩展再退回普通 reg-form”：
+
+- source 直接写 `uxtx #0` / `uxtw #0`
+- objdump 也能看到真实的 `cmn/adds/cmp/subs ... uxtx/uxtw`
+
+中途还修了一次 benchmark checksum 契约：
+
+- `addsadc32_ext`
+- `cmpsbc32_ext`
+- `subsbc32_ext`
+
+这 3 条 32-bit `_ext` helper 原来在 loop 中维护 live `rhs`，但最终 hash 没把
+`rhs` 混回结果，和对应 register baseline 的 checksum 形状不一致。现在已经补回，
+并同步更新了 `.out`。
+
+#### focused correctness
+
+fresh 跑过：
+
+- `ninja -C build-aarch64-linux-user qemu-aarch64`
+- `tests/tcg/aarch64/check-adc-sbc-host-direct.sh ... adc-sbc-host-direct`
+- `tests/tcg/aarch64/check-cmp-bcond-ext-host-direct.sh ... cmp-bcond-ext-host-direct`
+- `build-aarch64-linux-user/qemu-aarch64 -L /usr/aarch64-linux-gnu .../nzcv-status4`
+- `build-aarch64-linux-user/qemu-aarch64 -L /usr/aarch64-linux-gnu .../cmpstress-o3`
+- `make -C build-aarch64-linux-user/tests/tcg/aarch64-linux-user run-adcsbc-bench`
+
+结果：
+
+- ext codegen guard：通过
+- ext `B.cond` guard：通过
+- `nzcv-status4`：`PASS`
+- `cmpstress-o3`：`cmpstress-o3 0x03c9d1a1e84724d4`
+- `run-adcsbc-bench`：通过
+
+#### `_ext` perf hard gate
+
+口径：
+
+- same tree
+- same binary
+- `build-aarch64-linux-user/qemu-aarch64 -cpu max`
+- 默认 `200000000` iterations
+- 32-bit compare-like 额外做 `400000000` iterations spot-check
+- add-side 只切 `QEMU_A64_DISABLE_ADD_ADC_DIRECT=1`
+- compare-like sub-side 只切 `QEMU_A64_DISABLE_CMP_SBC_DIRECT=1`
+- materialized sub-side 只切 `QEMU_A64_DISABLE_SUB_SBC_DIRECT=1`
+
+`200000000` iterations，median：
+
+- `cmnadc64_ext`
+  - `0.33` vs `0.41`
+- `cmnadc32_ext`
+  - `0.42` vs `0.53`
+- `addsadc64_ext`
+  - `0.33` vs `0.41`
+- `addsadc32_ext`
+  - `0.49` vs `0.49`
+  - 基本持平
+- `cmpsbc64_ext`
+  - `0.37` vs `0.49`
+- `cmpsbc32_ext`
+  - `0.42` vs `0.54`
+- `subsbc64_ext`
+  - `0.34` vs `0.45`
+- `subsbc32_ext`
+  - `0.49` vs `0.53`
+
+`400000000` iterations spot-check：
+
+- `cmnadc32_ext`
+  - on：`0.83 0.81 0.80`
+  - off：`1.04 1.05 1.05`
+- `cmpsbc32_ext`
+  - on：`0.81 0.82`
+  - off：`1.08 1.05`
+
+中途有一条早期 `cmnadc32_ext off = 0.54` 的异常读数；后续 dedicated rerun
+没有复现，所以按 timing outlier 处理，没有据此改变判断。
+
+#### 当前判断
+
+- ext-form direct path 已经从前端、codegen、语义回归、benchmark 一直到 perf
+  hard gate 全部闭环
+- 没有新的稳定 correctness regression
+- 没有 `_ext` 子路径出现稳定负收益
+- `addsadc32_ext` 虽然基本持平，但它不是当前树的 perf blocker
+
+这一步现在可以收。下一拍如果继续扩，可以从：
+
+- 更广的 add/sub producer 形态
+- 或者继续把同类 direct path 扩到别的 family
+
+里二选一，而不是再回头补 ext 这条线的基础设施。

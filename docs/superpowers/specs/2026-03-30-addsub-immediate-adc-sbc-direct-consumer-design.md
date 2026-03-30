@@ -388,3 +388,34 @@ consumer 看到的依然是：
 - 先只收 materialized immediate producer
 - 或者单独设计 immediate-capable backend outop
 
+## 实施后更新（2026-03-30）
+
+实现阶段最终没有保留“完整 compare-like immediate add 全覆盖”。
+
+实际收口后的 accepted scope 是：
+
+- 保留：
+  - `CMN64 #imm -> ADC64`
+  - `CMP #imm -> SBC`
+  - `ADDS rd,#imm -> ADC`
+  - `SUBS rd,#imm -> SBC`
+- 不收：
+  - `CMN32 / ADDS xzr,#imm -> ADC32` direct producer
+
+原因不是 correctness，而是 perf hard gate：
+
+- full-scope 版本里，只有 `cmnadc32_imm` 出现稳定负回退
+- 根因判断是当前 i32 compare-like immediate add 需要的 raw-flags 胶水
+  仍然太贵
+- 因此这一步按 spec 里的 fallback 条件，选择“收窄单一负收益路径”，而不是把
+  整个 immediate-form add-side 一起撤回
+
+最终实现对应到代码上是：
+
+- `do_addsub_imm()` 中 compare-like immediate add 只在 `sf=1` 时记录
+  `lazy_adc_add`
+- `adc-sbc-host-direct.S` 仍保留 `cmn-imm->adc32` guest case，继续覆盖语义
+- `check-adc-sbc-host-direct.sh` 不再要求它命中 host-direct codegen
+
+这次更新后，`cmnadc64_imm` 继续稳定正收益，而 `cmnadc32_imm` 回到同量级
+波动区，不再构成当前实现的 perf blocker。

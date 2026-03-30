@@ -1586,6 +1586,195 @@ t7f_done:
     expect_reg_reg x5, x10, 0x99
     expect_reg_imm x8, 5, 0x99
 
+    /* 0x9a: adjacent CMN64 imm + plain ADC preserves NZCV and result */
+    mov     x5, #9
+    mov     x6, #3
+    movn    x0, #0            /* -1 */
+    cmn     x0, #1
+    adc     x8, x5, x6
+    expect_branch eq, 0x9a
+    expect_nzcv 0x6, 0x9a
+    expect_reg_imm x8, 13, 0x9a
+
+    /* 0x9b: adjacent CMN32 imm + plain ADC preserves 32-bit carry */
+    mov     w5, #9
+    mov     w6, #3
+    movn    w0, #0            /* -1 */
+    cmn     w0, #1
+    adc     w8, w5, w6
+    expect_branch eq, 0x9b
+    expect_nzcv 0x6, 0x9b
+    expect_reg_imm x8, 13, 0x9b
+
+    /* 0x9c: adjacent ADDS64 imm rd + plain ADC preserves result and NZCV */
+    movn    x0, #0            /* -1 */
+    mov     x6, #9
+    mov     x7, #3
+    adds    x5, x0, #1
+    adc     x8, x6, x7
+    expect_branch eq, 0x9c
+    expect_nzcv 0x6, 0x9c
+    expect_reg_imm x5, 0, 0x9c
+    expect_reg_imm x8, 13, 0x9c
+
+    /* 0x9d: adjacent ADDS32 imm rd + plain ADC preserves 32-bit carry */
+    movn    w0, #0            /* -1 */
+    mov     w6, #9
+    mov     w7, #3
+    adds    w5, w0, #1
+    adc     w8, w6, w7
+    expect_branch eq, 0x9d
+    expect_nzcv 0x6, 0x9d
+    expect_reg_imm x5, 0, 0x9d
+    expect_reg_imm x8, 13, 0x9d
+
+    /* 0x9e: adjacent CMP64 imm + plain SBC preserves NZCV and result */
+    mov     x5, #9
+    mov     x6, #3
+    cmp     x5, #9
+    sbc     x8, x5, x6
+    expect_branch eq, 0x9e
+    expect_nzcv 0x6, 0x9e
+    expect_reg_imm x8, 6, 0x9e
+
+    /* 0x9f: adjacent CMP32 imm + plain SBC preserves 32-bit carry */
+    mov     w5, #9
+    mov     w6, #3
+    cmp     w5, #9
+    sbc     w8, w5, w6
+    expect_branch eq, 0x9f
+    expect_nzcv 0x6, 0x9f
+    expect_reg_imm x8, 6, 0x9f
+
+    /* 0xa0: adjacent SUBS64 imm rd + plain SBC preserves result and NZCV */
+    mov     x0, #0
+    mov     x6, #9
+    mov     x7, #3
+    subs    x5, x0, #1
+    sbc     x8, x6, x7
+    movn    x10, #0           /* -1 */
+    expect_branch mi, 0xa0
+    expect_nzcv 0x8, 0xa0
+    expect_reg_reg x5, x10, 0xa0
+    expect_reg_imm x8, 5, 0xa0
+
+    /* 0xa1: adjacent SUBS32 imm rd + plain SBC preserves 32-bit borrow */
+    mov     w0, #0
+    mov     w6, #9
+    mov     w7, #3
+    subs    w5, w0, #1
+    sbc     w8, w6, w7
+    movn    w10, #0           /* 0xffffffff */
+    expect_branch mi, 0xa1
+    expect_nzcv 0x8, 0xa1
+    expect_reg_reg x5, x10, 0xa1
+    expect_reg_imm x8, 5, 0xa1
+
+    /* 0xa2: adjacent CMN64 ext + plain ADC preserves NZCV and result */
+    movn    x0, #0            /* -1 */
+    mov     x1, #1
+    mov     x5, #9
+    mov     x6, #3
+    cmn     x0, w1, uxtw #0
+    adc     x8, x5, x6
+    expect_branch eq, 0xa2
+    expect_nzcv 0x6, 0xa2
+    expect_reg_imm x8, 13, 0xa2
+
+    /* 0xa3: adjacent CMN32 ext + plain ADC preserves 32-bit carry */
+    movn    w0, #0            /* 0xffffffff */
+    mov     w1, #1
+    mov     w5, #9
+    mov     w6, #3
+    cmn     w0, w1, uxtw #0
+    adc     w8, w5, w6
+    expect_branch eq, 0xa3
+    expect_nzcv 0x6, 0xa3
+    expect_reg_imm x8, 13, 0xa3
+
+    /* 0xa4: adjacent ADDS64 ext rd + plain ADC preserves result and NZCV */
+    movn    x0, #0            /* -1 */
+    mov     x1, #1
+    mov     x6, #9
+    mov     x7, #3
+    adds    x5, x0, w1, uxtw #0
+    adc     x8, x6, x7
+    expect_branch eq, 0xa4
+    expect_nzcv 0x6, 0xa4
+    expect_reg_imm x5, 0, 0xa4
+    expect_reg_imm x8, 13, 0xa4
+
+    /* 0xa5: adjacent ADDS32 ext rd + plain ADC preserves 32-bit carry */
+    movn    w0, #0            /* 0xffffffff */
+    mov     w1, #1
+    mov     w6, #9
+    mov     w7, #3
+    adds    w5, w0, w1, uxtw #0
+    adc     w8, w6, w7
+    expect_branch eq, 0xa5
+    expect_nzcv 0x6, 0xa5
+    expect_reg_imm x5, 0, 0xa5
+    expect_reg_imm x8, 13, 0xa5
+
+    /* 0xa6: adjacent CMP64 ext + plain SBC preserves NZCV and result */
+    mov     x5, #9
+    mov     x6, #3
+    mov     x0, #4
+    mov     w1, #2
+    cmp     x0, w1, uxtw #1
+    sbc     x8, x5, x6
+    expect_branch eq, 0xa6
+    expect_nzcv 0x6, 0xa6
+    expect_reg_imm x8, 6, 0xa6
+
+    /* 0xa7: adjacent CMP32 ext + plain SBC preserves 32-bit carry */
+    mov     w5, #9
+    mov     w6, #3
+    mov     w0, #4
+    mov     w1, #2
+    cmp     w0, w1, uxtw #1
+    sbc     w8, w5, w6
+    expect_branch eq, 0xa7
+    expect_nzcv 0x6, 0xa7
+    expect_reg_imm x8, 6, 0xa7
+
+    /* 0xa8: adjacent SUBS64 ext rd + plain SBC preserves result and NZCV */
+    mov     x0, #0
+    mov     x1, #1
+    mov     x6, #9
+    mov     x7, #3
+    subs    x5, x0, w1, uxtw #0
+    sbc     x8, x6, x7
+    movn    x10, #0           /* -1 */
+    expect_branch mi, 0xa8
+    expect_nzcv 0x8, 0xa8
+    expect_reg_reg x5, x10, 0xa8
+    expect_reg_imm x8, 5, 0xa8
+
+    /* 0xa9: adjacent SUBS32 ext rd + plain SBC preserves 32-bit borrow */
+    mov     w0, #0
+    mov     w1, #1
+    mov     w6, #9
+    mov     w7, #3
+    subs    w5, w0, w1, uxtw #0
+    sbc     w8, w6, w7
+    movn    w10, #0           /* 0xffffffff */
+    expect_branch mi, 0xa9
+    expect_nzcv 0x8, 0xa9
+    expect_reg_reg x5, x10, 0xa9
+    expect_reg_imm x8, 5, 0xa9
+
+    /* 0xaa: SUBS compare-like ext -> shared B.eq consumer TB */
+    mov     x14, #1
+    adr     x15, t_aa_after
+    mov     x0, #4
+    mov     w1, #2
+    subs    xzr, x0, w1, uxtw #1
+    b       shared_bcond_eq_consumer
+t_aa_after:
+    expect_reg_reg x2, x14, 0xaa
+    expect_nzcv 0x6, 0xaa
+
     b       after_shared_consumers
 
 shared_nzcv_consumer:

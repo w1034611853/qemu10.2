@@ -797,6 +797,92 @@ Perf:
 
 - not measured yet for this step
 
+## 2026-03-30 Host-Direct Step 21 (narrow immediate-form direct scope: drop `CMN32 #imm -> ADC32`)
+
+Change:
+
+- Keep the immediate-form direct-consumer work for:
+  - `CMN64 #imm -> ADC64`
+  - `CMP #imm -> SBC`
+  - `ADDS rd,#imm -> ADC`
+  - `SUBS rd,#imm -> SBC`
+- Narrow the compare-like add side so `CMN32/ADDS xzr,#imm -> ADC32` no longer
+  records `lazy_adc_add` and therefore no longer demands a host-direct shape.
+- Keep the 32-bit guest case in `adc-sbc-host-direct.S` as a semantics smoke
+  case, but remove the corresponding codegen hard assertion from
+  `check-adc-sbc-host-direct.sh`.
+
+Why:
+
+- Full-scope immediate A/B showed only one stable negative outlier:
+  `cmnadc32_imm`.
+- That path was paying too much i32 raw-flags glue compared with the carry
+  decode it removed, while the rest of the immediate-form matrix stayed
+  positive or neutral.
+- Narrowing only this one case keeps the rest of the gains without dragging in
+  a still-unprofitable i32 compare-like immediate add path.
+
+Implementation:
+
+- In `do_addsub_imm()`, compare-like immediate add now enables `lazy_adc_add`
+  only when `a->sf` is true.
+- No consumer-side logic was widened or special-cased further; the narrowing is
+  entirely producer-side.
+- Focused codegen guard now intentionally does not require direct host `addl`
+  + `adcl` for `cmn-imm->adc32`.
+
+Correctness:
+
+- `ninja -C build-aarch64-linux-user qemu-aarch64` pass
+- `tests/tcg/aarch64/check-adc-sbc-host-direct.sh ... adc-sbc-host-direct` pass
+- `build-aarch64-linux-user/qemu-aarch64 -L /usr/aarch64-linux-gnu .../nzcv-status4`
+  pass
+- `build-aarch64-linux-user/qemu-aarch64 -L /usr/aarch64-linux-gnu .../cmpstress-o3`
+  pass
+- `make -C build-aarch64-linux-user/tests/tcg/aarch64-linux-user run-adcsbc-bench`
+  pass
+
+Perf:
+
+- same tree
+- same binary
+- add-side 只切 `QEMU_A64_DISABLE_ADD_ADC_DIRECT=1`
+- benchmark:
+  - `build-aarch64-linux-user/tests/tcg/aarch64-linux-user/adcsbc-bench`
+
+`200000000` iterations:
+
+- `cmnadc64_imm`
+  - 开启：`0.33 0.34 0.33`
+  - 关闭：`0.36 0.38 0.37`
+  - median：`0.33` vs `0.37`
+  - 开启 direct 快约 `10.8%`
+- `cmnadc32_imm`
+  - 开启：`0.35 0.35 0.35`
+  - 关闭：`0.35 0.34 0.34`
+  - median：`0.35` vs `0.34`
+  - 已回到同量级，不再出现收窄前 `15%+` 的稳定负回退
+
+`400000000` iterations spot-check:
+
+- `cmnadc64_imm`
+  - 开启：`0.65 0.65`
+  - 关闭：`0.72 0.74`
+- `cmnadc32_imm`
+  - 开启：`0.71 0.71`
+  - 关闭：`0.69 0.68`
+  - 这组已退回同档位波动区，说明收窄后不再存在原先那种明显 code-shape
+    级回退
+
+Conclusion:
+
+- 这次收窄不是撤销整步 immediate 优化，而是有意识地排除
+  `CMN32 #imm -> ADC32` 这一条当前不划算的 compare-like add path。
+- 收窄后，其余 immediate direct-consumer 路径继续保留；focused correctness
+  全绿。
+- `cmnadc64_imm` 继续稳定正收益，`cmnadc32_imm` 不再是 perf hard gate 的
+  blocker。
+
 ## 2026-03-30 Host-Direct Step 17 补充（`cmnadc32` root cause 与 i32 backend 收口）
 
 变更：
@@ -2010,3 +2096,126 @@ Notes:
 Perf:
 
 - not measured yet for this step
+
+## 2026-03-30 Host-Direct Step 22 (extended-register `ADDS/SUBS/CMN/CMP -> ADC/SBC`)
+
+Change:
+
+- Extend `do_addsub_ext()` so it can feed same-TB adjacent plain `ADC/SBC`
+  consumers for both:
+  - compare-like producers: `CMN/CMP <ext> -> ADC/SBC`
+  - materialized producers: `ADDS/SUBS rd,<ext> -> ADC/SBC`
+- Keep `SUBS xzr,<ext> -> future B.cond` ahead of adjacent plain `SBC`, so
+  the existing compare-to-branch fast path remains first priority.
+- Add ext-form host-direct codegen guards:
+  - `adc-sbc-host-direct` now checks the ext compare-like/materialized pairs
+  - `cmp-bcond-ext-host-direct` now checks the ext branch path with a stricter
+    “cmp to jcc without rebuilt decision flags” oracle
+- Add ext-form semantic coverage to `nzcv-status4`.
+- Add dedicated `_ext` benchmark modes to `adcsbc-bench`.
+
+Why:
+
+- `do_addsub_ext()` was the remaining obvious hole after register-form and
+  immediate-form arithmetic direct producers.
+- The ext rhs is already a live post-extension temp, so this path can reuse
+  the existing `pending_cc` skeleton without the immediate-form constant glue.
+
+Correctness:
+
+- `ninja -C build-aarch64-linux-user qemu-aarch64` pass
+- `tests/tcg/aarch64/check-adc-sbc-host-direct.sh ... adc-sbc-host-direct` pass
+- `tests/tcg/aarch64/check-cmp-bcond-ext-host-direct.sh ... cmp-bcond-ext-host-direct` pass
+- `build-aarch64-linux-user/qemu-aarch64 -L /usr/aarch64-linux-gnu .../nzcv-status4` pass
+- `build-aarch64-linux-user/qemu-aarch64 -L /usr/aarch64-linux-gnu .../cmpstress-o3` pass
+- `make -C build-aarch64-linux-user/tests/tcg/aarch64-linux-user run-adcsbc-bench` pass
+
+Notes:
+
+- The current good ext `B.cond` host shape is:
+  - host `cmp`
+  - raw-flags capture (`push/lahf/seto/pop`)
+  - direct `jcc`
+  The branch oracle now explicitly allows raw capture, while still rejecting
+  `test`, a second `cmp`, and carry/borrow decode/rebuild shapes.
+- `nzcv-status4` now covers:
+  - `CMN64/32 ext -> ADC`
+  - `ADDS64/32 ext rd -> ADC`
+  - `CMP64/32 ext -> SBC`
+  - `SUBS64/32 ext rd -> SBC`
+  - `SUBS xzr,<ext> -> shared B.eq consumer`
+- `_ext` benchmark helpers were checked in both source and objdump and really
+  lower to `uxtx/uxtw` extended-register forms.
+
+Perf:
+
+- same tree
+- same binary
+- `build-aarch64-linux-user/qemu-aarch64 -cpu max`
+- `200000000` iterations for the main A/B set
+- add-side only toggles `QEMU_A64_DISABLE_ADD_ADC_DIRECT=1`
+- compare-like sub-side only toggles `QEMU_A64_DISABLE_CMP_SBC_DIRECT=1`
+- materialized sub-side only toggles `QEMU_A64_DISABLE_SUB_SBC_DIRECT=1`
+
+`200000000` iterations, median:
+
+- `cmnadc64_ext`
+  - on: `0.34 0.33 0.32`
+  - off: `0.42 0.41 0.41`
+  - median: `0.33` vs `0.41`
+  - direct faster by about `19.5%`
+- `cmnadc32_ext`
+  - on: `0.41 0.42 0.42`
+  - off: `0.53 0.54 0.53`
+  - median: `0.42` vs `0.53`
+  - direct faster by about `20.8%`
+- `addsadc64_ext`
+  - on: `0.33 0.32 0.34`
+  - off: `0.44 0.41 0.41`
+  - median: `0.33` vs `0.41`
+  - direct faster by about `19.5%`
+- `addsadc32_ext`
+  - on: `0.49 0.50 0.48`
+  - off: `0.49 0.49 0.50`
+  - median: `0.49` vs `0.49`
+  - essentially flat
+- `cmpsbc64_ext`
+  - on: `0.38 0.37 0.37`
+  - off: `0.49 0.49 0.49`
+  - median: `0.37` vs `0.49`
+  - direct faster by about `24.5%`
+- `cmpsbc32_ext`
+  - on: `0.42 0.40 0.45`
+  - off: `0.54 0.53 0.54`
+  - median: `0.42` vs `0.54`
+  - direct faster by about `22.2%`
+- `subsbc64_ext`
+  - on: `0.33 0.35 0.34`
+  - off: `0.45 0.44 0.46`
+  - median: `0.34` vs `0.45`
+  - direct faster by about `24.4%`
+- `subsbc32_ext`
+  - on: `0.49 0.50 0.49`
+  - off: `0.55 0.52 0.53`
+  - median: `0.49` vs `0.53`
+  - direct faster by about `7.5%`
+
+`400000000` iterations spot-check:
+
+- `cmnadc32_ext`
+  - on: `0.83 0.81 0.80`
+  - off: `1.04 1.05 1.05`
+- `cmpsbc32_ext`
+  - on: `0.81 0.82`
+  - off: `1.08 1.05`
+
+One early `cmnadc32_ext off` run reported `0.54`; it did not reproduce on the
+dedicated rerun, so it was treated as a timing outlier rather than a real
+signal.
+
+Current reading:
+
+- ext-form focused correctness is green
+- ext-form `_ext` benchmark modes are now real and stable
+- the perf hard gate did not find any stable negative path
+- `addsadc32_ext` is basically neutral, but it is not a regression source

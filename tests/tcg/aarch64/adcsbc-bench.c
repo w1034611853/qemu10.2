@@ -93,6 +93,92 @@ static __attribute__((noinline)) uint64_t bench_addsadc64(uint64_t iters)
     return acc ^ lhs ^ (rhs << 1) ^ (sum >> 3);
 }
 
+static __attribute__((noinline)) uint64_t bench_cmnadc64_imm(uint64_t iters)
+{
+    uint64_t acc = UINT64_C(0x123456789abcdef0);
+    uint64_t lhs = UINT64_C(0xffffffffffffffff);
+
+    for (uint64_t i = 0; i < iters; i++) {
+        uint64_t v = data64[i & 15];
+
+        asm volatile(
+            "cmn %x[lhs], #1\n\t"
+            "adc %x[acc], %x[acc], %x[v]\n\t"
+            : [acc]"+r"(acc)
+            : [lhs]"r"(lhs), [v]"r"(v)
+            : "cc");
+
+        lhs += v ^ (acc >> 7);
+    }
+    return acc ^ lhs ^ (lhs << 1);
+}
+
+static __attribute__((noinline)) uint64_t bench_cmnadc64_ext(uint64_t iters)
+{
+    uint64_t acc = UINT64_C(0x123456789abcdef0);
+    uint64_t lhs = UINT64_C(0x9e3779b97f4a7c15);
+    uint64_t rhs = UINT64_C(0x6a09e667f3bcc909);
+
+    for (uint64_t i = 0; i < iters; i++) {
+        uint64_t v = data64[i & 15];
+
+        asm volatile(
+            "cmn %x[lhs], %x[rhs], uxtx #0\n\t"
+            "adc %x[acc], %x[acc], %x[v]\n\t"
+            : [acc]"+r"(acc)
+            : [lhs]"r"(lhs), [rhs]"r"(rhs), [v]"r"(v)
+            : "cc");
+
+        lhs += v ^ (acc >> 7);
+        rhs ^= (v << 9) + acc;
+    }
+    return acc ^ lhs ^ (rhs << 1);
+}
+
+static __attribute__((noinline)) uint64_t bench_addsadc64_imm(uint64_t iters)
+{
+    uint64_t acc = UINT64_C(0x123456789abcdef0);
+    uint64_t lhs = UINT64_C(0xffffffffffffffff);
+    uint64_t sum = 0;
+
+    for (uint64_t i = 0; i < iters; i++) {
+        uint64_t v = data64[i & 15];
+
+        asm volatile(
+            "adds %x[sum], %x[lhs], #1\n\t"
+            "adc %x[acc], %x[acc], %x[v]\n\t"
+            : [sum]"=&r"(sum), [acc]"+r"(acc)
+            : [lhs]"r"(lhs), [v]"r"(v)
+            : "cc");
+
+        lhs = sum + (v ^ (acc >> 7));
+    }
+    return acc ^ lhs ^ (lhs << 1) ^ (sum >> 3);
+}
+
+static __attribute__((noinline)) uint64_t bench_addsadc64_ext(uint64_t iters)
+{
+    uint64_t acc = UINT64_C(0x123456789abcdef0);
+    uint64_t lhs = UINT64_C(0x9e3779b97f4a7c15);
+    uint64_t rhs = UINT64_C(0x6a09e667f3bcc909);
+    uint64_t sum = 0;
+
+    for (uint64_t i = 0; i < iters; i++) {
+        uint64_t v = data64[i & 15];
+
+        asm volatile(
+            "adds %x[sum], %x[lhs], %x[rhs], uxtx #0\n\t"
+            "adc %x[acc], %x[acc], %x[v]\n\t"
+            : [sum]"=&r"(sum), [acc]"+r"(acc)
+            : [lhs]"r"(lhs), [rhs]"r"(rhs), [v]"r"(v)
+            : "cc");
+
+        lhs = sum + (v ^ (acc >> 7));
+        rhs ^= (v << 9) + sum;
+    }
+    return acc ^ lhs ^ (rhs << 1) ^ (sum >> 3);
+}
+
 static __attribute__((noinline)) uint64_t bench_sbc64(uint64_t iters)
 {
     uint64_t acc = UINT64_C(0xfedcba9876543210);
@@ -127,6 +213,92 @@ static __attribute__((noinline)) uint64_t bench_subssbc64(uint64_t iters)
 
         asm volatile(
             "subs %x[diff], %x[lhs], %x[rhs]\n\t"
+            "sbc %x[acc], %x[acc], %x[v]\n\t"
+            : [diff]"=&r"(diff), [acc]"+r"(acc)
+            : [lhs]"r"(lhs), [rhs]"r"(rhs), [v]"r"(v)
+            : "cc");
+
+        lhs = diff ^ (v + acc);
+        rhs += (v >> 3) ^ (diff << 1);
+    }
+    return acc ^ (lhs << 1) ^ rhs ^ (diff >> 5);
+}
+
+static __attribute__((noinline)) uint64_t bench_subssbc64_imm(uint64_t iters)
+{
+    uint64_t acc = UINT64_C(0xfedcba9876543210);
+    uint64_t lhs = UINT64_C(0x243f6a8885a308d3);
+    uint64_t diff = 0;
+
+    for (uint64_t i = 0; i < iters; i++) {
+        uint64_t v = data64[i & 15];
+
+        asm volatile(
+            "subs %x[diff], %x[lhs], #1\n\t"
+            "sbc %x[acc], %x[acc], %x[v]\n\t"
+            : [diff]"=&r"(diff), [acc]"+r"(acc)
+            : [lhs]"r"(lhs), [v]"r"(v)
+            : "cc");
+
+        lhs = diff ^ (v + acc);
+    }
+    return acc ^ (lhs << 1) ^ diff ^ (diff >> 5);
+}
+
+static __attribute__((noinline)) uint64_t bench_cmpsbc64_imm(uint64_t iters)
+{
+    uint64_t acc = UINT64_C(0xfedcba9876543210);
+    uint64_t lhs = UINT64_C(9);
+
+    for (uint64_t i = 0; i < iters; i++) {
+        uint64_t v = data64[i & 15];
+
+        asm volatile(
+            "cmp %x[lhs], #9\n\t"
+            "sbc %x[acc], %x[acc], %x[v]\n\t"
+            : [acc]"+r"(acc)
+            : [lhs]"r"(lhs), [v]"r"(v)
+            : "cc");
+
+        lhs ^= v + acc;
+    }
+    return acc ^ (lhs << 1) ^ lhs;
+}
+
+static __attribute__((noinline)) uint64_t bench_cmpsbc64_ext(uint64_t iters)
+{
+    uint64_t acc = UINT64_C(0xfedcba9876543210);
+    uint64_t lhs = UINT64_C(9);
+    uint64_t rhs = UINT64_C(0x13198a2e03707344);
+
+    for (uint64_t i = 0; i < iters; i++) {
+        uint64_t v = data64[i & 15];
+
+        asm volatile(
+            "cmp %x[lhs], %x[rhs], uxtx #0\n\t"
+            "sbc %x[acc], %x[acc], %x[v]\n\t"
+            : [acc]"+r"(acc)
+            : [lhs]"r"(lhs), [rhs]"r"(rhs), [v]"r"(v)
+            : "cc");
+
+        lhs ^= v + acc;
+        rhs += (v >> 3) ^ (acc << 1);
+    }
+    return acc ^ (lhs << 1) ^ rhs;
+}
+
+static __attribute__((noinline)) uint64_t bench_subsbc64_ext(uint64_t iters)
+{
+    uint64_t acc = UINT64_C(0xfedcba9876543210);
+    uint64_t lhs = UINT64_C(0x243f6a8885a308d3);
+    uint64_t rhs = UINT64_C(0x13198a2e03707344);
+    uint64_t diff = 0;
+
+    for (uint64_t i = 0; i < iters; i++) {
+        uint64_t v = data64[i & 15];
+
+        asm volatile(
+            "subs %x[diff], %x[lhs], %x[rhs], uxtx #0\n\t"
             "sbc %x[acc], %x[acc], %x[v]\n\t"
             : [diff]"=&r"(diff), [acc]"+r"(acc)
             : [lhs]"r"(lhs), [rhs]"r"(rhs), [v]"r"(v)
@@ -230,6 +402,94 @@ static __attribute__((noinline)) uint64_t bench_addsadc32(uint64_t iters)
     return (uint64_t)acc ^ ((uint64_t)lhs << 32) ^ rhs ^ ((uint64_t)sum << 17);
 }
 
+static __attribute__((noinline)) uint64_t bench_cmnadc32_imm(uint64_t iters)
+{
+    uint32_t acc = UINT32_C(0x89abcdef);
+    uint32_t lhs = UINT32_C(0xffffffff);
+
+    for (uint64_t i = 0; i < iters; i++) {
+        uint32_t v = data32[i & 15];
+
+        asm volatile(
+            "cmn %w[lhs], #1\n\t"
+            "adc %w[acc], %w[acc], %w[v]\n\t"
+            : [acc]"+r"(acc)
+            : [lhs]"r"(lhs), [v]"r"(v)
+            : "cc");
+
+        lhs += v ^ (acc >> 5);
+    }
+    return (uint64_t)acc ^ ((uint64_t)lhs << 32) ^ lhs;
+}
+
+static __attribute__((noinline)) uint64_t bench_cmnadc32_ext(uint64_t iters)
+{
+    uint32_t acc = UINT32_C(0x89abcdef);
+    uint32_t lhs = UINT32_C(0x7f4a7c15);
+    uint32_t rhs = UINT32_C(0xf3bcc909);
+
+    for (uint64_t i = 0; i < iters; i++) {
+        uint32_t v = data32[i & 15];
+
+        asm volatile(
+            "cmn %w[lhs], %w[rhs], uxtw #0\n\t"
+            "adc %w[acc], %w[acc], %w[v]\n\t"
+            : [acc]"+r"(acc)
+            : [lhs]"r"(lhs), [rhs]"r"(rhs), [v]"r"(v)
+            : "cc");
+
+        lhs += v ^ (acc >> 5);
+        rhs ^= (v << 7) + acc;
+    }
+    return (uint64_t)acc ^ ((uint64_t)lhs << 32) ^ rhs;
+}
+
+static __attribute__((noinline)) uint64_t bench_addsadc32_imm(uint64_t iters)
+{
+    uint32_t acc = UINT32_C(0x89abcdef);
+    uint32_t lhs = UINT32_C(0xffffffff);
+    uint32_t sum = 0;
+
+    for (uint64_t i = 0; i < iters; i++) {
+        uint32_t v = data32[i & 15];
+
+        asm volatile(
+            "adds %w[sum], %w[lhs], #1\n\t"
+            "adc %w[acc], %w[acc], %w[v]\n\t"
+            : [sum]"=&r"(sum), [acc]"+r"(acc)
+            : [lhs]"r"(lhs), [v]"r"(v)
+            : "cc");
+
+        lhs = sum + (v ^ (acc >> 5));
+    }
+    return (uint64_t)acc ^ ((uint64_t)lhs << 32) ^
+           ((uint64_t)sum << 17) ^ sum;
+}
+
+static __attribute__((noinline)) uint64_t bench_addsadc32_ext(uint64_t iters)
+{
+    uint32_t acc = UINT32_C(0x89abcdef);
+    uint32_t lhs = UINT32_C(0x7f4a7c15);
+    uint32_t rhs = UINT32_C(0xf3bcc909);
+    uint32_t sum = 0;
+
+    for (uint64_t i = 0; i < iters; i++) {
+        uint32_t v = data32[i & 15];
+
+        asm volatile(
+            "adds %w[sum], %w[lhs], %w[rhs], uxtw #0\n\t"
+            "adc %w[acc], %w[acc], %w[v]\n\t"
+            : [sum]"=&r"(sum), [acc]"+r"(acc)
+            : [lhs]"r"(lhs), [rhs]"r"(rhs), [v]"r"(v)
+            : "cc");
+
+        lhs = sum + (v ^ (acc >> 5));
+        rhs ^= (v << 7) + sum;
+    }
+    return (uint64_t)acc ^ ((uint64_t)lhs << 32) ^
+           rhs ^ ((uint64_t)sum << 17);
+}
+
 static __attribute__((noinline)) uint64_t bench_sbc32(uint64_t iters)
 {
     uint32_t acc = UINT32_C(0x76543210);
@@ -276,6 +536,94 @@ static __attribute__((noinline)) uint64_t bench_subssbc32(uint64_t iters)
            ((uint64_t)diff << 11);
 }
 
+static __attribute__((noinline)) uint64_t bench_subssbc32_imm(uint64_t iters)
+{
+    uint32_t acc = UINT32_C(0x76543210);
+    uint32_t lhs = UINT32_C(0x85a308d3);
+    uint32_t diff = 0;
+
+    for (uint64_t i = 0; i < iters; i++) {
+        uint32_t v = data32[i & 15];
+
+        asm volatile(
+            "subs %w[diff], %w[lhs], #1\n\t"
+            "sbc %w[acc], %w[acc], %w[v]\n\t"
+            : [diff]"=&r"(diff), [acc]"+r"(acc)
+            : [lhs]"r"(lhs), [v]"r"(v)
+            : "cc");
+
+        lhs = diff ^ (v + acc);
+    }
+    return (uint64_t)acc ^ ((uint64_t)lhs << 32) ^
+           ((uint64_t)diff << 11) ^ diff;
+}
+
+static __attribute__((noinline)) uint64_t bench_cmpsbc32_imm(uint64_t iters)
+{
+    uint32_t acc = UINT32_C(0x76543210);
+    uint32_t lhs = UINT32_C(9);
+
+    for (uint64_t i = 0; i < iters; i++) {
+        uint32_t v = data32[i & 15];
+
+        asm volatile(
+            "cmp %w[lhs], #9\n\t"
+            "sbc %w[acc], %w[acc], %w[v]\n\t"
+            : [acc]"+r"(acc)
+            : [lhs]"r"(lhs), [v]"r"(v)
+            : "cc");
+
+        lhs ^= v + acc;
+    }
+    return (uint64_t)acc ^ ((uint64_t)lhs << 32) ^ lhs;
+}
+
+static __attribute__((noinline)) uint64_t bench_cmpsbc32_ext(uint64_t iters)
+{
+    uint32_t acc = UINT32_C(0x76543210);
+    uint32_t lhs = UINT32_C(9);
+    uint32_t rhs = UINT32_C(0x03707344);
+
+    for (uint64_t i = 0; i < iters; i++) {
+        uint32_t v = data32[i & 15];
+
+        asm volatile(
+            "cmp %w[lhs], %w[rhs], uxtw #0\n\t"
+            "sbc %w[acc], %w[acc], %w[v]\n\t"
+            : [acc]"+r"(acc)
+            : [lhs]"r"(lhs), [rhs]"r"(rhs), [v]"r"(v)
+            : "cc");
+
+        lhs ^= v + acc;
+        rhs += (v >> 2) ^ (acc << 1);
+    }
+    return (uint64_t)acc ^ ((uint64_t)lhs << 32) ^ rhs;
+}
+
+static __attribute__((noinline)) uint64_t bench_subsbc32_ext(uint64_t iters)
+{
+    uint32_t acc = UINT32_C(0x76543210);
+    uint32_t lhs = UINT32_C(0x85a308d3);
+    uint32_t rhs = UINT32_C(0x03707344);
+    uint32_t diff = 0;
+
+    for (uint64_t i = 0; i < iters; i++) {
+        uint32_t v = data32[i & 15];
+
+        asm volatile(
+            "subs %w[diff], %w[lhs], %w[rhs], uxtw #0\n\t"
+            "sbc %w[acc], %w[acc], %w[v]\n\t"
+            : [diff]"=&r"(diff), [acc]"+r"(acc)
+            : [lhs]"r"(lhs), [rhs]"r"(rhs), [v]"r"(v)
+            : "cc");
+
+        lhs = diff ^ (v + acc);
+        rhs += (v >> 2) ^ (diff << 1);
+    }
+    return (uint64_t)acc ^ ((uint64_t)lhs << 32) ^
+           rhs ^ ((uint64_t)diff << 11);
+}
+
 static __attribute__((noinline)) uint64_t bench_adcsbc32(uint64_t iters)
 {
     uint32_t acc = UINT32_C(0xdeadbeef);
@@ -309,14 +657,38 @@ static uint64_t run_mode(const char *mode, uint64_t iters)
     if (strcmp(mode, "cmnadc64") == 0) {
         return bench_cmnadc64(iters);
     }
+    if (strcmp(mode, "cmnadc64_imm") == 0) {
+        return bench_cmnadc64_imm(iters);
+    }
+    if (strcmp(mode, "cmnadc64_ext") == 0) {
+        return bench_cmnadc64_ext(iters);
+    }
     if (strcmp(mode, "addsadc64") == 0) {
         return bench_addsadc64(iters);
+    }
+    if (strcmp(mode, "addsadc64_imm") == 0) {
+        return bench_addsadc64_imm(iters);
+    }
+    if (strcmp(mode, "addsadc64_ext") == 0) {
+        return bench_addsadc64_ext(iters);
     }
     if (strcmp(mode, "sbc64") == 0) {
         return bench_sbc64(iters);
     }
+    if (strcmp(mode, "cmpsbc64_imm") == 0) {
+        return bench_cmpsbc64_imm(iters);
+    }
+    if (strcmp(mode, "cmpsbc64_ext") == 0) {
+        return bench_cmpsbc64_ext(iters);
+    }
     if (strcmp(mode, "subsbc64") == 0) {
         return bench_subssbc64(iters);
+    }
+    if (strcmp(mode, "subsbc64_imm") == 0) {
+        return bench_subssbc64_imm(iters);
+    }
+    if (strcmp(mode, "subsbc64_ext") == 0) {
+        return bench_subsbc64_ext(iters);
     }
     if (strcmp(mode, "adcsbc64") == 0) {
         return bench_adcsbc64(iters);
@@ -327,14 +699,38 @@ static uint64_t run_mode(const char *mode, uint64_t iters)
     if (strcmp(mode, "cmnadc32") == 0) {
         return bench_cmnadc32(iters);
     }
+    if (strcmp(mode, "cmnadc32_imm") == 0) {
+        return bench_cmnadc32_imm(iters);
+    }
+    if (strcmp(mode, "cmnadc32_ext") == 0) {
+        return bench_cmnadc32_ext(iters);
+    }
     if (strcmp(mode, "addsadc32") == 0) {
         return bench_addsadc32(iters);
+    }
+    if (strcmp(mode, "addsadc32_imm") == 0) {
+        return bench_addsadc32_imm(iters);
+    }
+    if (strcmp(mode, "addsadc32_ext") == 0) {
+        return bench_addsadc32_ext(iters);
     }
     if (strcmp(mode, "sbc32") == 0) {
         return bench_sbc32(iters);
     }
+    if (strcmp(mode, "cmpsbc32_imm") == 0) {
+        return bench_cmpsbc32_imm(iters);
+    }
+    if (strcmp(mode, "cmpsbc32_ext") == 0) {
+        return bench_cmpsbc32_ext(iters);
+    }
     if (strcmp(mode, "subsbc32") == 0) {
         return bench_subssbc32(iters);
+    }
+    if (strcmp(mode, "subsbc32_imm") == 0) {
+        return bench_subssbc32_imm(iters);
+    }
+    if (strcmp(mode, "subsbc32_ext") == 0) {
+        return bench_subsbc32_ext(iters);
     }
     if (strcmp(mode, "adcsbc32") == 0) {
         return bench_adcsbc32(iters);
@@ -347,8 +743,13 @@ static uint64_t run_mode(const char *mode, uint64_t iters)
 int main(int argc, char **argv)
 {
     static const char *const modes[] = {
-        "adc64", "cmnadc64", "addsadc64", "sbc64", "subsbc64", "adcsbc64",
-        "adc32", "cmnadc32", "addsadc32", "sbc32", "subsbc32", "adcsbc32",
+        "adc64", "cmnadc64", "cmnadc64_imm", "cmnadc64_ext", "addsadc64",
+        "addsadc64_imm", "addsadc64_ext", "sbc64", "cmpsbc64_imm",
+        "cmpsbc64_ext", "subsbc64", "subsbc64_imm", "subsbc64_ext",
+        "adcsbc64", "adc32", "cmnadc32", "cmnadc32_imm", "cmnadc32_ext",
+        "addsadc32", "addsadc32_imm", "addsadc32_ext", "sbc32",
+        "cmpsbc32_imm", "cmpsbc32_ext", "subsbc32", "subsbc32_imm",
+        "subsbc32_ext", "adcsbc32",
     };
 
     if (argc == 1) {
