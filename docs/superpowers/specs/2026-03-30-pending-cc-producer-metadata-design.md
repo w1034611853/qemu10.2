@@ -380,6 +380,12 @@ A64PendingCCProducer a64_pending_cc;
 - 每阶段都跑 focused regression
 - 保持 env gate 和 benchmark mode 完全不变
 
+这里的“行为回退”不仅包括 correctness，也包括性能形状回退：
+
+- 命中条件变窄
+- codegen 退回旧 decode 链
+- 因 helper 重排导致原本相同的 hot path 发出不同 TCG / host 形状
+
 ### 风险 2：命名改得过头
 
 如果一口气把所有 helper 从 `cmp_pending` 改成全新命名，会放大 churn。
@@ -400,6 +406,21 @@ A64PendingCCProducer a64_pending_cc;
 - 只纳入当前树里已经存在的 producer kind
 - 不预留还没有真实调用方的复杂字段
 
+### 风险 4：translation-time 整理引入可测性能负担
+
+虽然这一步理论上应该是性能中性的，但它仍然可能在两处带来真实回退：
+
+- TB 翻译期 helper / struct 访问变多
+- 某些共享 helper 改写后，让原本等价的判断顺序或 emit 细节发生变化
+
+因此这一步不能以“只是重构”为理由默认视为安全。
+
+缓解方式：
+
+- 把 performance 视为 hard gate，而不是软参考
+- 保持 microbenchmark mode、env gate 和 spot-check 方法完全不变
+- 只要出现超出噪音的稳定负回退，就停止收这一步
+
 ## 测试与验收
 
 这一步不新增新的 guest case，但必须确保现有 focused regression 全绿：
@@ -414,7 +435,32 @@ A64PendingCCProducer a64_pending_cc;
 
 - `cmnadc64/cmnadc32/addsadc64/addsadc32/subsbc64/subsbc32`
   的 codegen 形状不应退回旧 decode 链
-- 如做 A/B spot check，预期应基本持平，不能出现稳定负回退
+- 必须做 same-binary spot-check：
+  - `cmnadc64`
+  - `cmnadc32`
+  - `addsadc64`
+  - `addsadc32`
+  - `subsbc64`
+  - `subsbc32`
+- spot-check 方法必须保持和当前记录一致：
+  - same tree
+  - same binary
+  - 仅切对应 env gate
+- 预期结果应基本持平；如果出现超出噪音的稳定负回退，则这一步判定失败，不收
+
+### 性能 hard gate
+
+这一步虽然是结构整理，但在执行上按“不能退化的优化基础设施”对待。
+
+因此实现计划必须把下面这条作为硬门槛：
+
+- 不能以“代码更整齐”为理由接受稳定的性能下降
+
+更具体地说：
+
+- 如果 focused correctness 全绿，但 benchmark 出现稳定负回退
+- 即使没有 correctness 问题
+- 这一步也不能算完成，必须继续修到持平或放弃该重构路径
 
 ## 完成定义
 
@@ -425,7 +471,7 @@ A64PendingCCProducer a64_pending_cc;
   都通过统一结构表达
 - clear / reset / drop / consume 后 canonical state 恢复 已有共享 helper
 - focused correctness 全绿
-- benchmark 无明显回退
+- benchmark 无超出噪音的稳定负回退
 
 ## 下一步接口价值
 
