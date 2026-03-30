@@ -2684,6 +2684,81 @@ fresh 跑过：
 - 这一步本身已经证明是正收益，不是当前整棵树慢于 clean 的来源
 - 控制项 `sbc64/sbc32` 基本持平，说明差异确实对着新路径来的
 
+### 2026-03-30 Step 20：pending-cc producer 轻量泛化
+
+这一步不新增任何新直通语义，纯粹是把已经存在的 metadata 模型收整：
+
+- 在 `translate.h` 中引入：
+  - `A64PendingCCProducerKind`
+  - `A64PendingCCProducer`
+- 把当前真实存在的 3 类 producer 统一收敛为：
+  - `REWINDABLE_CMP`
+  - `MATERIALIZED_ADD`
+  - `MATERIALIZED_SUB`
+- 在 `translate-a64.c` 中收敛共享 helper：
+  - clear / reset
+  - record / trace / drop
+  - adjacent-only 判定
+  - consumer 命中后的 canonical raw-state 恢复
+- `DisasContext` 中原来散落的 `a64_cmp_pending_*` 字段已经删除，
+  `a64_pending_cc` 成为唯一真源
+
+#### focused correctness
+
+fresh 跑过：
+
+- `ninja -C build-aarch64-linux-user qemu-aarch64`
+- `tests/tcg/aarch64/check-adc-sbc-host-direct.sh ... adc-sbc-host-direct`
+- `build-aarch64-linux-user/qemu-aarch64 -L /usr/aarch64-linux-gnu .../nzcv-status4`
+- `build-aarch64-linux-user/qemu-aarch64 -L /usr/aarch64-linux-gnu .../cmpstress-o3`
+- `make -C build-aarch64-linux-user/tests/tcg/aarch64-linux-user run-adcsbc-bench`
+
+结果：
+
+- codegen 形状回归：通过
+- `nzcv-status4`：`PASS`
+- `cmpstress-o3`：`cmpstress-o3 0x03c9d1a1e84724d4`
+- `run-adcsbc-bench`：通过
+
+#### performance hard gate
+
+仍然按 spec 里的 hard gate 做 same-binary spot-check：
+
+- same tree
+- same binary
+- `200000000` iterations
+- add-side 只切 `QEMU_A64_DISABLE_ADD_ADC_DIRECT=1`
+- sub-side 只切 `QEMU_A64_DISABLE_SUB_SBC_DIRECT=1`
+
+与任务开始前 baseline 的中位数对比：
+
+- `cmnadc64`
+  - baseline：`0.34` vs `0.43`
+  - refactor 后：`0.36` vs `0.42`
+- `cmnadc32`
+  - baseline：`3.15` vs `3.18`
+  - refactor 后：`3.17` vs `3.18`
+  - 这项有噪音，但中位数没有稳定负回退
+- `addsadc64`
+  - baseline：`0.35` vs `0.42`
+  - refactor 后：`0.35` vs `0.42`
+- `addsadc32`
+  - baseline：`0.47` vs `0.50`
+  - refactor 后：`0.42` vs `0.50`
+- `subsbc64`
+  - baseline：`0.38` vs `0.46`
+  - refactor 后：`0.35` vs `0.46`
+- `subsbc32`
+  - baseline：`0.51` vs `0.55`
+  - refactor 后：`0.50` vs `0.54`
+
+#### 当前判断
+
+- 这一步没有新增新优化语义
+- focused correctness 维持全绿
+- six-mode spot-check 未出现超出噪音的稳定负回退
+- 所以这次轻量泛化可以收
+
 下一步可以顺着这个骨架继续看：
 
 - 再往更中性的 pending-producer metadata 收一小步

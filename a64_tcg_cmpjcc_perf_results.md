@@ -1278,6 +1278,95 @@ Method：
 - 这说明 step 19 本身已经证明是正收益，不是全局拖慢来源
 - 控制项 `sbc64/sbc32` 基本持平，说明差异确实对着新路径来的
 
+## 2026-03-30 Host-Direct Step 20（pending-cc producer 轻量泛化）
+
+这一步不新增任何新的 producer / consumer 直通命中。
+
+目标是把当前 compare-centric 的 `a64_cmp_pending_*` translation metadata
+收敛成统一的 `A64PendingCCProducer` 小结构，并把下列共享语义集中起来：
+
+- clear / reset
+- record / trace / drop
+- adjacent-only 判定
+- consumer 命中后的 canonical raw-state 恢复
+
+### 变更
+
+- 在 `translate.h` 中引入：
+  - `A64PendingCCProducerKind`
+  - `A64PendingCCProducer`
+- 当前 3 类真实 producer 统一映射为：
+  - `A64_PENDING_CC_REWINDABLE_CMP`
+  - `A64_PENDING_CC_MATERIALIZED_ADD`
+  - `A64_PENDING_CC_MATERIALIZED_SUB`
+- `translate-a64.c` 中新增/收敛：
+  - `a64_clear_pending_cc_producer()`
+  - `a64_pending_cc_is_adjacent_to_curr_insn()`
+  - `a64_pending_cc_has_live_split_flags()`
+  - `a64_pending_cc_restore_raw_state_after_consume()`
+- 删除 `DisasContext` 中散落的 `a64_cmp_pending_*` 字段，`pending_cc`
+  成为唯一真源
+
+### fresh correctness
+
+- `ninja -C build-aarch64-linux-user qemu-aarch64`
+- `tests/tcg/aarch64/check-adc-sbc-host-direct.sh ... adc-sbc-host-direct`
+- `build-aarch64-linux-user/qemu-aarch64 -L /usr/aarch64-linux-gnu .../nzcv-status4`
+- `build-aarch64-linux-user/qemu-aarch64 -L /usr/aarch64-linux-gnu .../cmpstress-o3`
+- `make -C build-aarch64-linux-user/tests/tcg/aarch64-linux-user run-adcsbc-bench`
+
+结果：
+
+- codegen 回归通过
+- `nzcv-status4`：`PASS`
+- `cmpstress-o3`：`cmpstress-o3 0x03c9d1a1e84724d4`
+- `run-adcsbc-bench`：通过
+
+### performance hard gate（same-binary spot-check）
+
+方法：
+
+- same tree
+- same binary
+- benchmark：
+  - `build-aarch64-linux-user/tests/tcg/aarch64-linux-user/adcsbc-bench`
+- iterations：
+  - `200000000`
+- add-side 只切：
+  - `QEMU_A64_DISABLE_ADD_ADC_DIRECT=1`
+- sub-side 只切：
+  - `QEMU_A64_DISABLE_SUB_SBC_DIRECT=1`
+
+以中位数对比 baseline 与 refactor 后结果：
+
+- `cmnadc64`
+  - baseline：`0.34` vs `0.43`
+  - refactor 后：`0.36` vs `0.42`
+- `cmnadc32`
+  - baseline：`3.15` vs `3.18`
+  - refactor 后：`3.17` vs `3.18`
+  - 这一项机器噪音较大，但中位数与 baseline 同量级
+- `addsadc64`
+  - baseline：`0.35` vs `0.42`
+  - refactor 后：`0.35` vs `0.42`
+- `addsadc32`
+  - baseline：`0.47` vs `0.50`
+  - refactor 后：`0.42` vs `0.50`
+- `subsbc64`
+  - baseline：`0.38` vs `0.46`
+  - refactor 后：`0.35` vs `0.46`
+- `subsbc32`
+  - baseline：`0.51` vs `0.55`
+  - refactor 后：`0.50` vs `0.54`
+
+### 当前结论
+
+- 这一步是结构整理，不是新优化项
+- focused correctness 保持全绿
+- six-mode same-binary spot-check 未出现超出噪音的稳定负回退
+- 因此 step 20 可收；后续继续扩新直通时，可以直接复用统一的
+  `pending_cc.kind + cc_op + rewind` metadata
+
 ## 2026-03-28 Host-Direct Step 16 (same-TB adjacent `CMP/SUBS(xzr)` -> plain `SBC` direct consumer)
 
 Change:

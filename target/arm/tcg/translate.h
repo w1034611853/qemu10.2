@@ -42,6 +42,30 @@ typedef enum A64FlagsRep {
     A64_FLAGS_REP_RAW,
 } A64FlagsRep;
 
+typedef enum A64PendingCCProducerKind {
+    A64_PENDING_CC_NONE = 0,
+    A64_PENDING_CC_REWINDABLE_CMP,
+    A64_PENDING_CC_MATERIALIZED_ADD,
+    A64_PENDING_CC_MATERIALIZED_SUB,
+} A64PendingCCProducerKind;
+
+typedef struct A64PendingCCProducer {
+    bool valid;
+    bool keep;
+    bool sf;
+    TCGv_i64 lhs;
+    TCGv_i64 rhs;
+    TCGOp *rewind;
+    TCGOp *end;
+    target_ulong pc;
+    uint32_t age;
+    bool consumed;
+    const char *consumer;
+    uint32_t cc_op;
+    uint8_t gap_insns;
+    A64PendingCCProducerKind kind;
+} A64PendingCCProducer;
+
 typedef struct DisasContext {
     DisasContextBase base;
     CPUARMState *env;
@@ -210,22 +234,9 @@ typedef struct DisasContext {
     bool insn_start_updated;
     /* Offset from VNCR_EL2 when FEAT_NV2 redirects this reg to memory */
     uint32_t nv2_redirect_offset;
-    /* A64-only pending compare metadata for CMP/SUBS -> B.cond fast path. */
-    bool a64_cmp_pending_valid;
-    bool a64_cmp_pending_keep;
-    bool a64_cmp_pending_sf;
-    bool a64_cmp_pending_materialized;
-    TCGv_i64 a64_cmp_pending_lhs;
-    TCGv_i64 a64_cmp_pending_rhs;
-    TCGOp *a64_cmp_pending_rewind;
-    TCGOp *a64_cmp_pending_end;
-    target_ulong a64_cmp_pending_pc;
-    uint32_t a64_cmp_pending_age;
-    bool a64_cmp_pending_consumed;
-    const char *a64_cmp_pending_consumer;
-    uint32_t a64_cmp_pending_cc_op;
+    /* A64-only pending cc-producer metadata for compare/adc/sbc fast paths. */
+    A64PendingCCProducer a64_pending_cc;
     uint32_t a64_raw_cc_op;
-    uint8_t a64_cmp_pending_gap_insns;
     uint32_t a64_cmp_stat_records;
     uint32_t a64_cmp_stat_consumes;
     uint32_t a64_cmp_stat_rewinds;
