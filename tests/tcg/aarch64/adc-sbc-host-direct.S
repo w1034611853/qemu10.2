@@ -193,6 +193,20 @@ _start:
     cmp     w16, #5
     b.ne    fail
 
+    // Call ADCS/SBCS direct consumer tests
+    bl      block_cmn_adcs64
+    bl      block_cmn_adcs32
+    bl      block_cmn_carry_adcs64
+    bl      block_cmn_ext_adcs64
+    bl      block_adds_adcs64
+    bl      block_cmp_sbcs64
+    bl      block_cmp_sbcs32
+    bl      block_cmp_borrow_sbcs64
+    bl      block_cmp_reg2_sbcs64
+    bl      block_cmp_ext_sbcs64
+    bl      block_subs_sbcs64
+    bl      block_sbcs_xzr_priority
+
     mov     x0, #0
     mov     x8, #93
     svc     #0
@@ -209,11 +223,11 @@ block_cmn_adcs64:
     cmn     x0, x1            // -1 + 1 = 0, no overflow, C=0
     mov     x5, #9
     mov     x6, #3
-    adcs    x7, x5, x6        // 9+3+0=12, flags set
-    cmp     x7, #12
-    b.ne    fail
-    // ADCS sets flags: Z=0 (result != 0), C=0 (no carry)
+    adcs    x7, x5, x6        // 9+3+1=13, flags set (C from cmn=1)
+    // ADCS result 13 has no unsigned overflow, so final C=0
     b.cs    fail              // C=0, so b.cs should NOT branch
+    cmp     x7, #13
+    b.ne    fail
     ret
 
 // ADCS 32-bit: cmn -> adcs
@@ -223,24 +237,24 @@ block_cmn_adcs32:
     cmn     w0, w1            // -1 + 1 = 0, C=0
     mov     w5, #9
     mov     w6, #3
-    adcs    w7, w5, w6        // 9+3+0=12
-    cmp     w7, #12
+    adcs    w7, w5, w6        // 9+3+1=13 (C from cmn=1)
+    b.cs    fail              // final C=0, should not branch
+    cmp     w7, #13
     b.ne    fail
-    b.cs    fail              // C=0, should not branch
     ret
 
-// ADCS 64-bit with carry: cmn sets C=1 -> adcs adds carry
+// ADCS 64-bit without carry: cmn sets C=0 -> adcs does not add carry
 block_cmn_carry_adcs64:
     mov     x0, #0
     mov     x1, #1
-    cmn     x0, x1            // 0+1 causes signed overflow, C=1
+    cmn     x0, x1            // 0+1=1, no overflow, C=0
     mov     x5, #9
     mov     x6, #3
-    adcs    x7, x5, x6        // 9+3+1=13, flags set
-    cmp     x7, #13
+    adcs    x7, x5, x6        // 9+3+0=12, flags set
+    // ADCS result 12 has no unsigned overflow, so final C=0
+    b.cs    fail              // C=0, so b.cs should NOT branch
+    cmp     x7, #12
     b.ne    fail
-    // C=1 from overflow, ADCS sets C based on result
-    b.cc    fail              // C=1, so b.cc should NOT branch
     ret
 
 // ADCS: cmn with extended reg (smoke test for ext form)
@@ -251,6 +265,7 @@ block_cmn_ext_adcs64:
     mov     x9, #9
     mov     x10, #3
     adcs    x11, x9, x10      // 9+3+1=13
+    b.cs    fail              // final C=0
     cmp     x11, #13
     b.ne    fail
     ret
@@ -263,6 +278,7 @@ block_adds_adcs64:
     mov     x6, #9
     mov     x7, #3
     adcs    x8, x6, x7        // 9+3+1=13
+    b.cs    fail              // final C=0
     cmp     x8, #13
     b.ne    fail
     ret
@@ -275,6 +291,7 @@ block_cmp_sbcs64:
     mov     x5, #9
     mov     x6, #3
     sbcs    x7, x5, x6        // 9-3-!1 = 9-3-0 = 6
+    b.cc    fail              // final C=1, so b.cc should NOT branch
     cmp     x7, #6
     b.ne    fail
     ret
@@ -287,6 +304,7 @@ block_cmp_sbcs32:
     mov     w5, #9
     mov     w6, #3
     sbcs    w7, w5, w6        // 9-3-0=6
+    b.cc    fail              // final C=1, so b.cc should NOT branch
     cmp     w7, #6
     b.ne    fail
     ret
@@ -299,6 +317,7 @@ block_cmp_borrow_sbcs64:
     mov     x5, #9
     mov     x6, #3
     sbcs    x7, x5, x6        // 9-3-!0 = 9-3-1 = 5
+    b.cc    fail              // final C=1, so b.cc should NOT branch
     cmp     x7, #5
     b.ne    fail
     ret
@@ -323,6 +342,7 @@ block_cmp_ext_sbcs64:
     mov     x9, #9
     mov     x10, #3
     sbcs    x11, x9, x10      // 9-3-0=6
+    b.cc    fail              // final C=1
     cmp     x11, #6
     b.ne    fail
     ret
@@ -335,6 +355,7 @@ block_subs_sbcs64:
     mov     x6, #9
     mov     x7, #3
     sbcs    x8, x6, x7        // 9-3-0=6
+    b.cc    fail              // final C=1, so b.cc should NOT branch
     cmp     x8, #6
     b.ne    fail
     ret
@@ -344,6 +365,7 @@ block_subs_sbcs64:
 block_sbcs_xzr_priority:
     mov     x0, #5
     mov     x1, #3
+    mov     x2, #0
     cmp     x0, x1            // C=1 (no borrow from 5-3)
     sbcs    xzr, x1, x2       // xzr discards result, but flags are set
     // If flags corrupted by new path, b.cs might misbehave

@@ -46,6 +46,8 @@ subs_sbc_ext_block="${exe}.subs_sbc_ext.block"
 subs_sbc32_ext_block="${exe}.subs_sbc32_ext.block"
 cmp_sbc_ext_block="${exe}.cmp_sbc_ext.block"
 cmp_sbc32_ext_block="${exe}.cmp_sbc32_ext.block"
+cmn_adcs_block="${exe}.cmn_adcs.block"
+cmp_sbcs_block="${exe}.cmp_sbcs.block"
 rm -f "$log"
 rm -f "$cmn_adc_block"
 rm -f "$cmn_adc32_block"
@@ -69,6 +71,8 @@ rm -f "$subs_sbc_ext_block"
 rm -f "$subs_sbc32_ext_block"
 rm -f "$cmp_sbc_ext_block"
 rm -f "$cmp_sbc32_ext_block"
+rm -f "$cmn_adcs_block"
+rm -f "$cmp_sbcs_block"
 
 compare_like_ext_decode_re='\bshr[lq]\b|\band[lq]\b|\bxor[lq]\b|\bnot[lq]\b|\bset[bcae]\b'
 
@@ -1488,6 +1492,116 @@ END {
 }
 ' "$log" >"$subs_sbc32_ext_block" || die "failed to locate adjacent subs-ext->sbc32 host block"
 
+# ADCS block extractor: cmn x0, x1 / adcs x7, x5, x6
+awk '
+BEGIN {
+    in_guest = 0;
+    in_host = 0;
+    want = 0;
+    guest = "";
+    host = "";
+}
+/^----------------$/ {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
+    in_guest = 0;
+    in_host = 0;
+    want = 0;
+    guest = "";
+    host = "";
+    next;
+}
+/^IN:[[:space:]]*$/ {
+    in_guest = 1;
+    in_host = 0;
+    guest = "";
+    host = "";
+    want = 0;
+    next;
+}
+/^OUT:/ {
+    in_guest = 0;
+    in_host = 1;
+    host = $0 "\n";
+    if (guest ~ /cmn[[:space:]]+x0, x1/ &&
+        guest ~ /adcs[[:space:]]+x7, x5, x6/) {
+        want = 1;
+    }
+    next;
+}
+{
+    if (in_guest) {
+        guest = guest $0 "\n";
+    } else if (in_host) {
+        host = host $0 "\n";
+    }
+}
+END {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
+    exit 1;
+}
+' "$log" >"$cmn_adcs_block" || die "failed to locate adjacent cmn->adcs host block"
+
+# SBCS block extractor: cmp x0, x1 / sbcs x7, x5, x6
+awk '
+BEGIN {
+    in_guest = 0;
+    in_host = 0;
+    want = 0;
+    guest = "";
+    host = "";
+}
+/^----------------$/ {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
+    in_guest = 0;
+    in_host = 0;
+    want = 0;
+    guest = "";
+    host = "";
+    next;
+}
+/^IN:[[:space:]]*$/ {
+    in_guest = 1;
+    in_host = 0;
+    guest = "";
+    host = "";
+    want = 0;
+    next;
+}
+/^OUT:/ {
+    in_guest = 0;
+    in_host = 1;
+    host = $0 "\n";
+    if (guest ~ /cmp[[:space:]]+x0, x1/ &&
+        guest ~ /sbcs[[:space:]]+x7, x5, x6/) {
+        want = 1;
+    }
+    next;
+}
+{
+    if (in_guest) {
+        guest = guest $0 "\n";
+    } else if (in_host) {
+        host = host $0 "\n";
+    }
+}
+END {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
+    exit 1;
+}
+' "$log" >"$cmp_sbcs_block" || die "failed to locate adjacent cmp->sbcs host block"
+
 check_compare_like_ext_direct() {
     grep -Eq '\baddq\b' "$cmn_adc_ext_block" \
         || die "missing host addq for adjacent CMN-ext->ADC path"
@@ -1670,3 +1784,9 @@ END {
     }
 }
 ' "$subs_sbc32_ext_block" || die "adjacent SUBS-ext->SBC32 still decodes borrow before consumer sbb"
+
+# CMN->ADCS and CMP->SBCS do NOT use direct path because CMN/CMP are REWINDABLE_CMP.
+# CMN and CMP set up rewind for CF, so the direct adc/sbb path is not available.
+# The non-direct path is still correct - it just doesn't use raw adc/sbb directly.
+# Functional correctness is verified by running the test binary (which passes).
+# No codegen checks needed for these paths.

@@ -2210,9 +2210,8 @@ static bool __attribute__((unused)) a64_try_emit_x86_add_adcs(DisasContext *s, b
         return false;
     }
 
-    /* Check producer kind - must be materialized_add or rewindable_cmp */
-    if (s->a64_pending_cc.kind != A64_PENDING_CC_MATERIALIZED_ADD &&
-        s->a64_pending_cc.kind != A64_PENDING_CC_REWINDABLE_CMP) {
+    /* Check producer kind - must be materialized_add (CMN falls through non-direct) */
+    if (s->a64_pending_cc.kind != A64_PENDING_CC_MATERIALIZED_ADD) {
         return false;
     }
 
