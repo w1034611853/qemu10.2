@@ -11584,6 +11584,20 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
         return true;
     }
 
+    /* Try setflags direct consumer paths */
+    if (setflags && !lazy_bcond_cmp) {
+        /* ADCS direct path */
+        if (!is_sub &&
+            a64_try_emit_x86_add_adcs(s, a->sf, tcg_rd, tcg_rn, tcg_rm)) {
+            return true;
+        }
+        /* SBCS direct path */
+        if (is_sub &&
+            a64_try_emit_x86_cmp_sbcs(s, a->sf, tcg_rd, tcg_rn, tcg_rm)) {
+            return true;
+        }
+    }
+
     carry = tcg_temp_new_i32();
     a64_get_current_carry_flag(s, carry);
 
