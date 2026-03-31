@@ -781,6 +781,24 @@ static bool a64_insn_is_plain_adc_reg(uint32_t insn)
     return (insn & 0x7fe0fc00u) == 0x1a000000u;
 }
 
+static bool a64_insn_is_plain_adcs_reg(uint32_t insn)
+{
+    /*
+     * ADCS . 01 11010000 ..... 000000 ..... .....
+     * Same as ADC but with S bit set (bit 29).
+     */
+    return (insn & 0x7e200000u) == 0x3a000000u;
+}
+
+static bool a64_insn_is_plain_sbcs_reg(uint32_t insn)
+{
+    /*
+     * SBCS . 11 11010000 ..... 000000 ..... .....
+     * Same as SBC but with S bit set (bit 29).
+     */
+    return (insn & 0x7e200000u) == 0x7a000000u;
+}
+
 static bool a64_cmp_sbc_direct_enabled(void)
 {
     static int cached = -1;
@@ -908,7 +926,9 @@ static bool a64_find_adjacent_plain_sbc_cmp(DisasContext *s)
     }
 
     return a64_insn_is_plain_sbc_reg(arm_ldl_code(s->env, &s->base, pc,
-                                                  s->sctlr_b));
+                                                  s->sctlr_b)) ||
+           a64_insn_is_plain_sbcs_reg(arm_ldl_code(s->env, &s->base, pc,
+                                                    s->sctlr_b));
 }
 
 static bool a64_find_adjacent_plain_sbc_sub(DisasContext *s)
@@ -926,7 +946,9 @@ static bool a64_find_adjacent_plain_sbc_sub(DisasContext *s)
     }
 
     return a64_insn_is_plain_sbc_reg(arm_ldl_code(s->env, &s->base, pc,
-                                                  s->sctlr_b));
+                                                  s->sctlr_b)) ||
+           a64_insn_is_plain_sbcs_reg(arm_ldl_code(s->env, &s->base, pc,
+                                                    s->sctlr_b));
 }
 
 static bool a64_find_adjacent_plain_adc(DisasContext *s)
@@ -944,7 +966,9 @@ static bool a64_find_adjacent_plain_adc(DisasContext *s)
     }
 
     return a64_insn_is_plain_adc_reg(arm_ldl_code(s->env, &s->base, pc,
-                                                  s->sctlr_b));
+                                                  s->sctlr_b)) ||
+           a64_insn_is_plain_adcs_reg(arm_ldl_code(s->env, &s->base, pc,
+                                                    s->sctlr_b));
 }
 #else
 static bool a64_find_future_bcond_gap(DisasContext *s, uint8_t *gap_insns)
