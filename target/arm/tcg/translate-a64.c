@@ -2248,6 +2248,68 @@ static bool a64_try_emit_x86_add_adcs(DisasContext *s, bool sf,
 }
 #endif
 
+/*
+ * a64_try_emit_x86_cmp_sbcs - setflags sub-side consumer helper for SBCS
+ *
+ * Emits host SBB for SBCS, consuming the pending producer's live CF/borrow
+ * directly WITHOUT calling a64_get_current_carry_flag().
+ *
+ * Key differences from plain a64_try_emit_x86_cmp_sbc:
+ * 1. NO call to a64_get_current_carry_flag() - we use the pending producer's
+ *    live CF directly
+ * 2. Set final raw state to A64_X86_CC_SBC64/SBC32 (consumer's flags)
+ * 3. Mark pending_cc as consumed (valid = false)
+ * 4. NO producer state restoration - consumer's raw flags become canonical
+ */
+#if defined(__i386__) || defined(__x86_64__)
+static bool __attribute__((unused)) a64_try_emit_x86_cmp_sbcs(DisasContext *s, bool sf,
+                                       TCGv_i64 tcg_rd, TCGv_i64 tcg_rn,
+                                       TCGv_i64 tcg_rm)
+{
+    /* Check pending_cc is valid and is a sub-type operation */
+    if (!s->a64_pending_cc.valid) {
+        return false;
+    }
+    if (s->a64_pending_cc.cc_op != (sf ? A64_X86_CC_SUB64
+                                      : A64_X86_CC_SUB32)) {
+        return false;
+    }
+
+    /* Check producer kind - must be materialized_sub only */
+    if (s->a64_pending_cc.kind != A64_PENDING_CC_MATERIALIZED_SUB) {
+        return false;
+    }
+
+    /* Emit the sbb instruction - carry/borrow is already live on the host */
+    if (sf) {
+        a64_emit_subbi_i64(tcg_rd, tcg_rn, tcg_rm);
+    } else {
+        TCGv_i32 result32 = tcg_temp_new_i32();
+        TCGv_i32 rn32 = tcg_temp_new_i32();
+        TCGv_i32 rm32 = tcg_temp_new_i32();
+
+        tcg_gen_extrl_i64_i32(rn32, tcg_rn);
+        tcg_gen_extrl_i64_i32(rm32, tcg_rm);
+        a64_emit_subbi_i32(result32, rn32, rm32);
+        tcg_gen_extu_i32_i64(tcg_rd, result32);
+    }
+
+    /* Set consumer's raw flags state (NOT producer's) */
+    a64_set_raw_flags_state(s, sf ? A64_X86_CC_SBC64 : A64_X86_CC_SBC32);
+
+    /* Mark producer as consumed - no restoration needed */
+    s->a64_pending_cc.valid = false;
+    return true;
+}
+#else
+static bool __attribute__((unused)) a64_try_emit_x86_cmp_sbcs(DisasContext *s, bool sf,
+                                       TCGv_i64 tcg_rd, TCGv_i64 tcg_rn,
+                                       TCGv_i64 tcg_rm)
+{
+    return false;
+}
+#endif
+
 static void a64_test_cc(DisasContext *s, DisasCompare64 *c64, int cc)
 {
     if (s->a64_flags_rep == A64_FLAGS_REP_SPLIT) {
