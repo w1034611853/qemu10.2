@@ -1775,6 +1775,54 @@ t_aa_after:
     expect_reg_reg x2, x14, 0xaa
     expect_nzcv 0x6, 0xaa
 
+    /* 0xab: ADCS raw producer -> ADC sees carry=1 (setflags consumer chain) */
+    mov     x0, #5
+    cmp     x0, #3            /* Seed C = 1 */
+    movn    x1, #0            /* -1 */
+    mov     x2, #0
+    adcs    xzr, x1, x2       /* Producer: -1+0+C=1=0, Z=1, C=1, V=0 -> NZCV=0x6 */
+    mov     x5, #10
+    mov     x6, #20
+    adc     x7, x5, x6        /* Consumer: 10+20+1=31 */
+    expect_nzcv 0x6, 0xab
+    expect_reg_imm x7, 31, 0xab
+
+    /* 0xac: SBCS raw producer -> ADC sees carry=0 (setflags consumer chain) */
+    mov     x0, #5
+    cmp     x0, #3            /* Seed C = 1 */
+    mov     x1, #1
+    mov     x2, #3
+    sbcs    xzr, x1, x2       /* Producer: 1-3-NOT(1)=-1, Z=0, C=0, V=0 -> NZCV=0x8 */
+    mov     x5, #10
+    mov     x6, #20
+    adc     x7, x5, x6        /* Consumer: 10+20+0=30 */
+    expect_nzcv 0x8, 0xac
+    expect_reg_imm x7, 30, 0xac
+
+    /* 0xad: ADCS32 raw producer -> ADC sees carry=1 (setflags consumer chain) */
+    mov     x0, #5
+    cmp     x0, #3            /* Seed C = 1 */
+    movn    w1, #0            /* 0xffffffff */
+    mov     w2, #0
+    adcs    w3, w1, w2        /* Producer: -1+0+1=0, Z=1, C=1, V=0 -> NZCV=0x6 */
+    mov     w5, #10
+    mov     w6, #20
+    adc     w7, w5, w6         /* Consumer: 10+20+1=31 */
+    expect_nzcv 0x6, 0xad
+    expect_reg_imm w7, 31, 0xad
+
+    /* 0xae: SBCS32 raw producer -> ADC sees carry=0 (setflags consumer chain) */
+    mov     x0, #5
+    cmp     x0, #3            /* Seed C = 1 */
+    mov     w1, #1
+    mov     w2, #3
+    sbcs    w3, w1, w2        /* Producer: 1-3-NOT(1)=-1, Z=0, C=0, V=0 -> NZCV=0x8 */
+    mov     w5, #10
+    mov     w6, #20
+    adc     w7, w5, w6         /* Consumer: 10+20+0=30 */
+    expect_nzcv 0x8, 0xae
+    expect_reg_imm w7, 30, 0xae
+
     b       after_shared_consumers
 
 shared_nzcv_consumer:
