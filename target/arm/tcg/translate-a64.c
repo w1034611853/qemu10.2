@@ -2270,6 +2270,12 @@ static bool __attribute__((unused)) a64_try_emit_x86_cmp_sbcs(DisasContext *s, b
     if (!s->a64_pending_cc.valid) {
         return false;
     }
+    if (s->a64_pending_cc.rewind != NULL) {
+        return false;
+    }
+    if (!a64_pending_cc_is_adjacent_to_curr_insn(s)) {
+        return false;
+    }
     if (s->a64_pending_cc.cc_op != (sf ? A64_X86_CC_SUB64
                                       : A64_X86_CC_SUB32)) {
         return false;
@@ -2277,6 +2283,9 @@ static bool __attribute__((unused)) a64_try_emit_x86_cmp_sbcs(DisasContext *s, b
 
     /* Check producer kind - must be materialized_sub only */
     if (s->a64_pending_cc.kind != A64_PENDING_CC_MATERIALIZED_SUB) {
+        return false;
+    }
+    if (!a64_sub_sbc_direct_enabled()) {
         return false;
     }
 
