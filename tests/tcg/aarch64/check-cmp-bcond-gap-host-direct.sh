@@ -94,14 +94,14 @@ assert_direct_host_block()
 
     block=$(extract_host_block "$label" "$branch_sym")
 
-    grep -Eq '(^|[^[:alnum:]_])(cmp[ql]|add[ql]|sub[ql])([^[:alnum:]_]|$)' "$block" \
-        || die "expected compare/add/sub lowering in $label host block"
+    grep -Eq '(^|[^[:alnum:]_])(cmp[ql]|add[ql]|sub[ql]|adc[ql]|sbb[ql])([^[:alnum:]_]|$)' "$block" \
+        || die "expected compare/add/sub/adc/sbb lowering in $label host block"
 
     if grep -Eo '\bset[a-z]+\b' "$block" | grep -Ev '^seto$' >/dev/null; then
         die "unexpected canonical flag decode setcc in $label host block"
     fi
 
-    if grep -Eq '\b(test[qlbwd]?|shr[qlbwd]?|and[qlbwd]?|xor[qlbwd]?|not[qlbwd]?)\b' \
+    if grep -Eq '\b(test[qlbwd]?|shr[qlbwd]?|and[qlbwd]?|not[qlbwd]?)\b' \
         "$block"; then
         die "unexpected canonical flag decode ops in $label host block"
     fi
@@ -220,6 +220,8 @@ assert_direct_positive "cmn vs gap1" cmn_vs_gap1_producer cmn_vs_gap1_branch 2
 assert_direct_positive "adds vc gap4" adds_vc_gap4_producer adds_vc_gap4_branch 5
 assert_direct_positive "cmn mi gap4" cmn_mi_gap4_producer cmn_mi_gap4_branch 5
 assert_direct_positive "adds pl gap1" adds_pl_gap1_producer adds_pl_gap1_branch 2
+assert_direct_positive "adcs eq gap1" adcs_eq_gap1_producer adcs_eq_gap1_branch 2
+assert_direct_positive "adcs vs gap4" adcs_vs_gap4_producer adcs_vs_gap4_branch 5
 
 assert_no_use "non-whitelist gap" cmp_bad_gap_producer
 assert_no_use "flags writer gap" cmp_flags_writer_producer

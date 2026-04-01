@@ -55,6 +55,7 @@ typedef struct A64PendingCCProducer {
     bool sf;
     TCGv_i64 lhs;
     TCGv_i64 rhs;
+    TCGv_i32 carry;
     TCGOp *rewind;
     TCGOp *end;
     target_ulong pc;
