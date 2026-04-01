@@ -2046,15 +2046,20 @@ static bool a64_try_emit_x86_cmp_sbc(DisasContext *s, bool sf,
                                      TCGv_i64 tcg_rd, TCGv_i64 tcg_rn,
                                      TCGv_i64 tcg_rm)
 {
+    uint32_t plain_cc_op = sf ? A64_X86_CC_SUB64 : A64_X86_CC_SUB32;
+    uint32_t carry_cc_op = sf ? A64_X86_CC_SBC64 : A64_X86_CC_SBC32;
+
     if (!s->a64_pending_cc.valid ||
         s->a64_pending_cc.rewind != NULL ||
-        !a64_pending_cc_is_adjacent_to_curr_insn(s) ||
-        s->a64_pending_cc.cc_op != (sf ? A64_X86_CC_SUB64
-                                      : A64_X86_CC_SUB32)) {
+        !a64_pending_cc_is_adjacent_to_curr_insn(s)) {
         return false;
     }
 
     if (s->a64_pending_cc.kind == A64_PENDING_CC_MATERIALIZED_SUB) {
+        if (s->a64_pending_cc.cc_op != plain_cc_op &&
+            s->a64_pending_cc.cc_op != carry_cc_op) {
+            return false;
+        }
         if (!a64_sub_sbc_direct_enabled()) {
             return false;
         }
@@ -2072,6 +2077,9 @@ static bool a64_try_emit_x86_cmp_sbc(DisasContext *s, bool sf,
             tcg_gen_extu_i32_i64(tcg_rd, result32);
         }
     } else if (s->a64_pending_cc.kind == A64_PENDING_CC_REWINDABLE_CMP) {
+        if (s->a64_pending_cc.cc_op != plain_cc_op) {
+            return false;
+        }
         if (!a64_cmp_sbc_direct_enabled()) {
             return false;
         }
@@ -2117,19 +2125,24 @@ static bool a64_try_emit_x86_add_adc(DisasContext *s, bool sf,
                                      TCGv_i64 tcg_rd, TCGv_i64 tcg_rn,
                                      TCGv_i64 tcg_rm)
 {
+    uint32_t plain_cc_op = sf ? A64_X86_CC_ADD64 : A64_X86_CC_ADD32;
+    uint32_t carry_cc_op = sf ? A64_X86_CC_ADC64 : A64_X86_CC_ADC32;
+
     if (!a64_add_adc_direct_enabled()) {
         return false;
     }
     if (!s->a64_pending_cc.valid ||
         s->a64_pending_cc.rewind != NULL ||
-        !a64_pending_cc_is_adjacent_to_curr_insn(s) ||
-        s->a64_pending_cc.cc_op != (sf ? A64_X86_CC_ADD64
-                                      : A64_X86_CC_ADD32)) {
+        !a64_pending_cc_is_adjacent_to_curr_insn(s)) {
         return false;
     }
 
-    a64_cmp_note_consume(s, "ADC-x86-add-adc");
     if (s->a64_pending_cc.kind == A64_PENDING_CC_MATERIALIZED_ADD) {
+        if (s->a64_pending_cc.cc_op != plain_cc_op &&
+            s->a64_pending_cc.cc_op != carry_cc_op) {
+            return false;
+        }
+        a64_cmp_note_consume(s, "ADC-x86-add-adc");
         if (sf) {
             a64_emit_addci_i64(tcg_rd, tcg_rn, tcg_rm);
         } else {
@@ -2143,6 +2156,10 @@ static bool a64_try_emit_x86_add_adc(DisasContext *s, bool sf,
             tcg_gen_extu_i32_i64(tcg_rd, result32);
         }
     } else if (s->a64_pending_cc.kind == A64_PENDING_CC_REWINDABLE_CMP) {
+        if (s->a64_pending_cc.cc_op != plain_cc_op) {
+            return false;
+        }
+        a64_cmp_note_consume(s, "ADC-x86-add-adc");
         if (a64_tcgv_i64_is_const(s->a64_pending_cc.rhs)) {
             TCGv_i32 raw = tcg_temp_new_i32();
 
@@ -11627,10 +11644,20 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
     TCGv_i32 carry;
     TCGv_i64 tcg_rm, tcg_y, tcg_rn, tcg_rd;
     bool lazy_bcond_cmp = false;
+    bool materialized_sbc_sbc = false;
+    bool materialized_adc_adc = false;
+    bool executed = false;
     uint8_t gap_insns = 0;
 
     if (setflags && is_sub && a->rd == 31) {
         lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns);
+    }
+    if (setflags && a->rd != 31) {
+        if (is_sub) {
+            materialized_sbc_sbc = a64_find_adjacent_plain_sbc_sub(s, false);
+        } else {
+            materialized_adc_adc = a64_find_adjacent_plain_adc(s, false);
+        }
     }
 
     tcg_rd = cpu_reg(s, a->rd);
@@ -11652,42 +11679,59 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
         /* ADCS direct path */
         if (!is_sub &&
             a64_try_emit_x86_add_adcs(s, a->sf, tcg_rd, tcg_rn, tcg_rm)) {
-            return true;
+            executed = true;
         }
         /* SBCS direct path */
-        if (is_sub &&
+        if (!executed && is_sub &&
             a64_try_emit_x86_cmp_sbcs(s, a->sf, tcg_rd, tcg_rn, tcg_rm)) {
-            return true;
+            executed = true;
         }
     }
 
-    carry = tcg_temp_new_i32();
-    a64_get_current_carry_flag(s, carry);
+    if (!executed) {
+        carry = tcg_temp_new_i32();
+        a64_get_current_carry_flag(s, carry);
 
-    if (setflags) {
-        if (!lazy_bcond_cmp) {
-            bool allow_direct = is_sub || a->rd != 31;
+        if (setflags) {
+            if (!lazy_bcond_cmp) {
+                bool allow_direct = is_sub || a->rd != 31;
 
-            gen_adc_CC(s, a->sf, tcg_rd, tcg_rn, tcg_y, carry,
-                       is_sub, allow_direct);
-        }
-    } else {
-        if (is_sub) {
-            gen_sbc(a->sf, tcg_rd, tcg_rn, tcg_rm, carry);
+                gen_adc_CC(s, a->sf, tcg_rd, tcg_rn, tcg_y, carry,
+                           is_sub, allow_direct);
+            }
         } else {
-            gen_adc(a->sf, tcg_rd, tcg_rn, tcg_rm, carry);
+            if (is_sub) {
+                gen_sbc(a->sf, tcg_rd, tcg_rn, tcg_rm, carry);
+            } else {
+                gen_adc(a->sf, tcg_rd, tcg_rn, tcg_rm, carry);
+            }
+        }
+
+        if (lazy_bcond_cmp) {
+            TCGv_i64 rhs_eff = tcg_temp_new_i64();
+
+            a64_gen_sbc_cmp_rhs(a->sf, rhs_eff, tcg_y, carry);
+            a64_record_cmp_for_bcond(s, a->sf, tcg_rn, rhs_eff,
+                                     NULL, tcg_last_op(),
+                                     a->sf ? A64_X86_CC_SUB64
+                                           : A64_X86_CC_SUB32,
+                                     gap_insns);
         }
     }
 
-    if (lazy_bcond_cmp) {
-        TCGv_i64 rhs_eff = tcg_temp_new_i64();
+    if (materialized_adc_adc || materialized_sbc_sbc) {
+        A64PendingCCProducerKind kind = materialized_adc_adc
+            ? A64_PENDING_CC_MATERIALIZED_ADD
+            : A64_PENDING_CC_MATERIALIZED_SUB;
+        uint32_t cc_op = is_sub ? (a->sf ? A64_X86_CC_SBC64
+                                         : A64_X86_CC_SBC32)
+                                : (a->sf ? A64_X86_CC_ADC64
+                                         : A64_X86_CC_ADC32);
 
-        a64_gen_sbc_cmp_rhs(a->sf, rhs_eff, tcg_y, carry);
-        a64_record_cmp_for_bcond(s, a->sf, tcg_rn, rhs_eff,
+        a64_record_cmp_for_bcond(s, a->sf, tcg_rn, tcg_rm,
                                  NULL, tcg_last_op(),
-                                 a->sf ? A64_X86_CC_SUB64
-                                       : A64_X86_CC_SUB32,
-                                 gap_insns);
+                                 cc_op, 0);
+        s->a64_pending_cc.kind = kind;
     }
     return true;
 }
