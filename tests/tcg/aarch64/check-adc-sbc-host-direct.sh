@@ -356,6 +356,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -367,6 +370,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -375,6 +381,9 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
     next;
 }
 /^OUT:/ {
@@ -410,6 +419,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -421,6 +433,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -429,6 +444,9 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
     next;
 }
 /^OUT:/ {
@@ -464,6 +482,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -475,6 +496,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -483,6 +507,9 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
     next;
 }
 /^OUT:/ {
@@ -518,6 +545,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -529,6 +559,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -537,6 +570,9 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
     next;
 }
 /^OUT:/ {
@@ -2714,20 +2750,26 @@ END {
 
 awk '
 /adcl/ {
-    pending = 1;
+    seen_producer = 1;
+    saw_glue = 0;
+    in_between = 1;
     next;
 }
-pending {
-    if ($0 ~ /^[[:space:]]*$/) {
-        next;
+in_between {
+    if ($0 ~ /\bshr[lq]\b/ || $0 ~ /\band[lq]\b/ || $0 ~ /\bxor[lq]\b/ ||
+        $0 ~ /\bnot[lq]\b/ || $0 ~ /\bset[bcae]\b/ ||
+        $0 ~ /add[ql][[:space:]]+\$-1,/) {
+        saw_glue = 1;
     }
     if ($0 ~ /adcq/) {
-        exit 1;
+        seen_consumer = 1;
+        exit saw_glue ? 0 : 1;
     }
-    pending = 0;
 }
 END {
-    exit 0;
+    if (!seen_producer || !seen_consumer) {
+        exit 1;
+    }
 }
 ' "$adcs32_adc64_block" || die "mixed-width ADCS32->ADC64 unexpectedly used the compact same-width direct shape"
 
