@@ -1871,6 +1871,58 @@ t_aa_after:
     expect_nzcv 0x2, 0xb2
     expect_reg_imm w8, 5, 0xb2
 
+    /* 0xb3: ADCS64 -> ADC64 -> MRS NZCV preserves producer flags */
+    /* Producer: adcs -1 + 0 + 1 = 0, sets Z=1, C=1 -> NZCV = 0x6 */
+    mov     x0, #5
+    cmp     x0, #3            /* Seed C = 1 */
+    movn    x1, #0            /* -1 */
+    mov     x2, #0
+    mov     x6, #10
+    mov     x7, #20
+    adcs    x5, x1, x2        /* Producer: NZCV = 0x6 */
+    adc     x8, x6, x7        /* Consumer: 10+20+1=31, would set NZCV=0x0 if it wrote flags */
+    expect_nzcv 0x6, 0xb3
+    expect_reg_imm x8, 31, 0xb3
+
+    /* 0xb4: SBCS64 -> SBC64 -> MRS NZCV preserves producer flags */
+    /* Producer: sbcs 1 - 3 - 0 = -2, sets N=1, C=0 -> NZCV = 0x8 */
+    mov     x0, #5
+    cmp     x0, #3            /* Seed C = 1 */
+    mov     x1, #1
+    mov     x2, #3
+    mov     x6, #20
+    mov     x7, #10
+    sbcs    x5, x1, x2        /* Producer: NZCV = 0x8 */
+    sbc     x8, x6, x7        /* Consumer: 20-10-1=9, would set NZCV=0x2 if it wrote flags */
+    expect_nzcv 0x8, 0xb4
+    expect_reg_imm x8, 9, 0xb4
+
+    /* 0xb5: ADCS32 -> ADC32 -> MRS NZCV preserves producer flags */
+    /* Producer: adcs 0xffffffff + 0 + 1 = 0, sets Z=1, C=1 -> NZCV = 0x6 */
+    mov     x0, #5
+    cmp     x0, #3            /* Seed C = 1 */
+    movn    w1, #0            /* 0xffffffff */
+    mov     w2, #0
+    mov     w6, #10
+    mov     w7, #20
+    adcs    w5, w1, w2        /* Producer: NZCV = 0x6 */
+    adc     w8, w6, w7        /* Consumer: 10+20+1=31, would set NZCV=0x0 if it wrote flags */
+    expect_nzcv 0x6, 0xb5
+    expect_reg_imm w8, 31, 0xb5
+
+    /* 0xb6: SBCS32 -> SBC32 -> MRS NZCV preserves producer flags */
+    /* Producer: sbcs 1 - 3 - 0 = 0xfffffffe, sets N=1, C=0 -> NZCV = 0x8 */
+    mov     x0, #5
+    cmp     x0, #3            /* Seed C = 1 */
+    mov     w1, #1
+    mov     w2, #3
+    mov     w6, #20
+    mov     w7, #10
+    sbcs    w5, w1, w2        /* Producer: NZCV = 0x8 */
+    sbc     w8, w6, w7        /* Consumer: 20-10-1=9, would set NZCV=0x2 if it wrote flags */
+    expect_nzcv 0x8, 0xb6
+    expect_reg_imm w8, 9, 0xb6
+
     b       after_shared_consumers
 
 shared_nzcv_consumer:

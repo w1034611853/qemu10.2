@@ -211,6 +211,11 @@ _start:
     bl      block_subs_sbcs32
     bl      block_subs_imm_sbcs64      // SUBS imm -> SBCS (adjacent)
     bl      block_subs_ext_sbcs64      // SUBS ext -> SBCS (adjacent)
+    bl      block_adcs_adc64
+    bl      block_adcs_adc32
+    bl      block_sbcs_sbc64
+    bl      block_sbcs_sbc32
+    bl      block_adcs32_adc64
     bl      block_sbcs_xzr_priority
     bl      block_cmn_adcs64_adjacent   // CMN->ADCS truly adjacent (narrowed)
     bl      block_cmp_sbcs64_adjacent   // CMP->SBCS truly adjacent (narrowed)
@@ -441,6 +446,86 @@ block_subs_ext_sbcs64:
     sbcs    x8, x6, x7        // 9-3-0=6
     b.cc    fail              // final C=1, so b.cc should NOT branch
     cmp     x8, #6
+    b.ne    fail
+    ret
+
+// ADCS: adcs(rd) producer -> adc consumer (64-bit, truly adjacent)
+block_adcs_adc64:
+    mov     x0, #5
+    mov     x6, #10
+    mov     x7, #20
+    cmp     x0, #3            // Seed C=1 for the producer
+    movn    x1, #0            // x1 = -1
+    mov     x2, #0
+    adcs    x5, x1, x2        // -1+0+1=0, NZCV=0x6
+    adc     x8, x6, x7        // 10+20+1=31, flags must stay from producer
+    b.ne    fail              // Producer Z=1 must survive plain ADC
+    b.cc    fail              // Producer C=1 must survive plain ADC
+    cmp     x8, #31
+    b.ne    fail
+    ret
+
+// ADCS: adcs(rd) producer -> adc consumer (32-bit, truly adjacent)
+block_adcs_adc32:
+    mov     x0, #5
+    mov     w6, #10
+    mov     w7, #20
+    cmp     x0, #3            // Seed C=1 for the producer
+    movn    w1, #0            // w1 = 0xffffffff
+    mov     w2, #0
+    adcs    w5, w1, w2        // 0xffffffff+0+1=0, NZCV=0x6
+    adc     w8, w6, w7        // 10+20+1=31, flags must stay from producer
+    b.ne    fail              // Producer Z=1 must survive plain ADC
+    b.cc    fail              // Producer C=1 must survive plain ADC
+    cmp     w8, #31
+    b.ne    fail
+    ret
+
+// SBCS: sbcs(rd) producer -> sbc consumer (64-bit, truly adjacent)
+block_sbcs_sbc64:
+    mov     x0, #5
+    mov     x6, #20
+    mov     x7, #10
+    cmp     x0, #3            // Seed C=1 for the producer
+    mov     x1, #1
+    mov     x2, #3
+    sbcs    x5, x1, x2        // 1-3-0=-2, NZCV=0x8
+    sbc     x8, x6, x7        // 20-10-1=9, flags must stay from producer
+    b.pl    fail              // Producer N=1 must survive plain SBC
+    b.cs    fail              // Producer C=0 must survive plain SBC
+    cmp     x8, #9
+    b.ne    fail
+    ret
+
+// SBCS: sbcs(rd) producer -> sbc consumer (32-bit, truly adjacent)
+block_sbcs_sbc32:
+    mov     x0, #5
+    mov     w6, #20
+    mov     w7, #10
+    cmp     x0, #3            // Seed C=1 for the producer
+    mov     w1, #1
+    mov     w2, #3
+    sbcs    w5, w1, w2        // 1-3-0=-2, NZCV=0x8
+    sbc     w8, w6, w7        // 20-10-1=9, flags must stay from producer
+    b.pl    fail              // Producer N=1 must survive plain SBC
+    b.cs    fail              // Producer C=0 must survive plain SBC
+    cmp     w8, #9
+    b.ne    fail
+    ret
+
+// ADCS32 -> ADC64 mixed-width smoke test: must stay outside same-width direct support
+block_adcs32_adc64:
+    mov     x0, #5
+    mov     x6, #10
+    mov     x7, #20
+    cmp     x0, #3            // Seed C=1 for the producer
+    movn    w1, #0            // w1 = 0xffffffff
+    mov     w2, #0
+    adcs    w5, w1, w2        // 0xffffffff+0+1=0, NZCV=0x6
+    adc     x8, x6, x7        // 10+20+1=31, mixed-width consumer
+    b.ne    fail
+    b.cc    fail
+    cmp     x8, #31
     b.ne    fail
     ret
 
