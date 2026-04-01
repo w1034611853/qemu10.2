@@ -104,6 +104,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -115,6 +118,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -123,6 +129,9 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
     next;
 }
 /^OUT:/ {
@@ -158,6 +167,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -169,6 +181,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -177,6 +192,9 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
     next;
 }
 /^OUT:/ {
@@ -212,6 +230,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -223,6 +244,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -231,6 +255,9 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
     next;
 }
 /^OUT:/ {
@@ -266,6 +293,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -277,6 +307,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -285,6 +318,9 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
     next;
 }
 /^OUT:/ {
@@ -1898,15 +1934,20 @@ BEGIN {
     in_guest = 0;
     in_host = 1;
     host = $0 "\n";
-    if (guest ~ /adds[[:space:]]+x5, x0, x1/ &&
-        guest ~ /adcs[[:space:]]+x8, x6, x7/) {
+    if (adds > 0 && adcs == adds + 1) {
         want = 1;
     }
     next;
 }
 {
     if (in_guest) {
+        guest_line++;
         guest = guest $0 "\n";
+        if ($0 ~ /adds[[:space:]]+x5, x0, x1/) {
+            adds = guest_line;
+        } else if ($0 ~ /adcs[[:space:]]+x8, x6, x7/) {
+            adcs = guest_line;
+        }
     } else if (in_host) {
         host = host $0 "\n";
     }
@@ -1953,15 +1994,20 @@ BEGIN {
     in_guest = 0;
     in_host = 1;
     host = $0 "\n";
-    if (guest ~ /subs[[:space:]]+x5, x0, x1/ &&
-        guest ~ /sbcs[[:space:]]+x8, x6, x7/) {
+    if (subs > 0 && sbcs == subs + 1) {
         want = 1;
     }
     next;
 }
 {
     if (in_guest) {
+        guest_line++;
         guest = guest $0 "\n";
+        if ($0 ~ /subs[[:space:]]+x5, x0, x1/) {
+            subs = guest_line;
+        } else if ($0 ~ /sbcs[[:space:]]+x8, x6, x7/) {
+            sbcs = guest_line;
+        }
     } else if (in_host) {
         host = host $0 "\n";
     }
@@ -2008,15 +2054,20 @@ BEGIN {
     in_guest = 0;
     in_host = 1;
     host = $0 "\n";
-    if (guest ~ /adds[[:space:]]+w5, w0, w1/ &&
-        guest ~ /adcs[[:space:]]+w8, w6, w7/) {
+    if (adds > 0 && adcs == adds + 1) {
         want = 1;
     }
     next;
 }
 {
     if (in_guest) {
+        guest_line++;
         guest = guest $0 "\n";
+        if ($0 ~ /adds[[:space:]]+w5, w0, w1/) {
+            adds = guest_line;
+        } else if ($0 ~ /adcs[[:space:]]+w8, w6, w7/) {
+            adcs = guest_line;
+        }
     } else if (in_host) {
         host = host $0 "\n";
     }
@@ -2063,15 +2114,20 @@ BEGIN {
     in_guest = 0;
     in_host = 1;
     host = $0 "\n";
-    if (guest ~ /subs[[:space:]]+w5, w0, w1/ &&
-        guest ~ /sbcs[[:space:]]+w8, w6, w7/) {
+    if (subs > 0 && sbcs == subs + 1) {
         want = 1;
     }
     next;
 }
 {
     if (in_guest) {
+        guest_line++;
         guest = guest $0 "\n";
+        if ($0 ~ /subs[[:space:]]+w5, w0, w1/) {
+            subs = guest_line;
+        } else if ($0 ~ /sbcs[[:space:]]+w8, w6, w7/) {
+            sbcs = guest_line;
+        }
     } else if (in_host) {
         host = host $0 "\n";
     }
@@ -2657,23 +2713,21 @@ END {
 ' "$sbcs_sbc32_block" || die "materialized SBCS32->SBC32 still has borrow decode glue between producer sbb and consumer sbb"
 
 awk '
-/adcl/ && !seen_producer {
-    seen_producer = 1;
+/adcl/ {
+    pending = 1;
     next;
 }
-seen_producer && !seen_consumer && /adcq/ {
-    seen_consumer = 1;
-    exit saw_intervening ? 0 : 1;
-}
-seen_producer && !seen_consumer {
-    if ($0 !~ /^[[:space:]]*$/) {
-        saw_intervening = 1;
+pending {
+    if ($0 ~ /^[[:space:]]*$/) {
+        next;
     }
-}
-END {
-    if (!seen_producer || !seen_consumer || !saw_intervening) {
+    if ($0 ~ /adcq/) {
         exit 1;
     }
+    pending = 0;
+}
+END {
+    exit 0;
 }
 ' "$adcs32_adc64_block" || die "mixed-width ADCS32->ADC64 unexpectedly used the compact same-width direct shape"
 
