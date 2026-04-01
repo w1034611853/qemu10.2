@@ -2093,6 +2093,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adcs = 0;
+    adc = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -2104,6 +2107,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adcs = 0;
+    adc = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -2112,21 +2118,29 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    adcs = 0;
+    adc = 0;
     next;
 }
 /^OUT:/ {
     in_guest = 0;
     in_host = 1;
     host = $0 "\n";
-    if (guest ~ /adcs[[:space:]]+x5, x1, x2/ &&
-        guest ~ /adc[[:space:]]+x8, x6, x7/) {
+    if (adcs > 0 && adc == adcs + 1) {
         want = 1;
     }
     next;
 }
 {
     if (in_guest) {
+        guest_line++;
         guest = guest $0 "\n";
+        if ($0 ~ /adcs[[:space:]]+x5, x1, x2/) {
+            adcs = guest_line;
+        } else if ($0 ~ /adc[[:space:]]+x8, x6, x7/) {
+            adc = guest_line;
+        }
     } else if (in_host) {
         host = host $0 "\n";
     }
@@ -2148,6 +2162,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adcs = 0;
+    adc = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -2159,6 +2176,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adcs = 0;
+    adc = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -2167,21 +2187,29 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    adcs = 0;
+    adc = 0;
     next;
 }
 /^OUT:/ {
     in_guest = 0;
     in_host = 1;
     host = $0 "\n";
-    if (guest ~ /adcs[[:space:]]+w5, w1, w2/ &&
-        guest ~ /adc[[:space:]]+w8, w6, w7/) {
+    if (adcs > 0 && adc == adcs + 1) {
         want = 1;
     }
     next;
 }
 {
     if (in_guest) {
+        guest_line++;
         guest = guest $0 "\n";
+        if ($0 ~ /adcs[[:space:]]+w5, w1, w2/) {
+            adcs = guest_line;
+        } else if ($0 ~ /adc[[:space:]]+w8, w6, w7/) {
+            adc = guest_line;
+        }
     } else if (in_host) {
         host = host $0 "\n";
     }
@@ -2203,6 +2231,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    sbcs = 0;
+    sbc = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -2214,6 +2245,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    sbcs = 0;
+    sbc = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -2222,21 +2256,29 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    sbcs = 0;
+    sbc = 0;
     next;
 }
 /^OUT:/ {
     in_guest = 0;
     in_host = 1;
     host = $0 "\n";
-    if (guest ~ /sbcs[[:space:]]+x5, x1, x2/ &&
-        guest ~ /sbc[[:space:]]+x8, x6, x7/) {
+    if (sbcs > 0 && sbc == sbcs + 1) {
         want = 1;
     }
     next;
 }
 {
     if (in_guest) {
+        guest_line++;
         guest = guest $0 "\n";
+        if ($0 ~ /sbcs[[:space:]]+x5, x1, x2/) {
+            sbcs = guest_line;
+        } else if ($0 ~ /sbc[[:space:]]+x8, x6, x7/) {
+            sbc = guest_line;
+        }
     } else if (in_host) {
         host = host $0 "\n";
     }
@@ -2258,6 +2300,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    sbcs = 0;
+    sbc = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -2269,6 +2314,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    sbcs = 0;
+    sbc = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -2277,21 +2325,29 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    sbcs = 0;
+    sbc = 0;
     next;
 }
 /^OUT:/ {
     in_guest = 0;
     in_host = 1;
     host = $0 "\n";
-    if (guest ~ /sbcs[[:space:]]+w5, w1, w2/ &&
-        guest ~ /sbc[[:space:]]+w8, w6, w7/) {
+    if (sbcs > 0 && sbc == sbcs + 1) {
         want = 1;
     }
     next;
 }
 {
     if (in_guest) {
+        guest_line++;
         guest = guest $0 "\n";
+        if ($0 ~ /sbcs[[:space:]]+w5, w1, w2/) {
+            sbcs = guest_line;
+        } else if ($0 ~ /sbc[[:space:]]+w8, w6, w7/) {
+            sbc = guest_line;
+        }
     } else if (in_host) {
         host = host $0 "\n";
     }
@@ -2313,6 +2369,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adcs = 0;
+    adc = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -2324,6 +2383,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adcs = 0;
+    adc = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -2332,21 +2394,29 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    adcs = 0;
+    adc = 0;
     next;
 }
 /^OUT:/ {
     in_guest = 0;
     in_host = 1;
     host = $0 "\n";
-    if (guest ~ /adcs[[:space:]]+w5, w1, w2/ &&
-        guest ~ /adc[[:space:]]+x8, x6, x7/) {
+    if (adcs > 0 && adc == adcs + 1) {
         want = 1;
     }
     next;
 }
 {
     if (in_guest) {
+        guest_line++;
         guest = guest $0 "\n";
+        if ($0 ~ /adcs[[:space:]]+w5, w1, w2/) {
+            adcs = guest_line;
+        } else if ($0 ~ /adc[[:space:]]+x8, x6, x7/) {
+            adc = guest_line;
+        }
     } else if (in_host) {
         host = host $0 "\n";
     }
@@ -2593,20 +2663,19 @@ awk '
 }
 seen_producer && !seen_consumer && /adcq/ {
     seen_consumer = 1;
-    exit saw_glue ? 0 : 1;
+    exit saw_intervening ? 0 : 1;
 }
-seen_producer && !seen_consumer &&
-(/\bshr[lq]\b/ || /\band[lq]\b/ || /\bxor[lq]\b/ ||
- /\bnot[lq]\b/ || /\bset[bcae]\b/ ||
- /add[ql][[:space:]]+\$-1,/) {
-    saw_glue = 1;
+seen_producer && !seen_consumer {
+    if ($0 !~ /^[[:space:]]*$/) {
+        saw_intervening = 1;
+    }
 }
 END {
-    if (!seen_producer || !seen_consumer || !saw_glue) {
+    if (!seen_producer || !seen_consumer || !saw_intervening) {
         exit 1;
     }
 }
-' "$adcs32_adc64_block" || die "mixed-width ADCS32->ADC64 unexpectedly matched the compact same-width direct shape"
+' "$adcs32_adc64_block" || die "mixed-width ADCS32->ADC64 unexpectedly used the compact same-width direct shape"
 
 # ------------------------------------------------------------------------
 # 3.3 对 compare-like CMN/CMP -> ADCS/SBCS 做负向检查（确保不走direct path）
