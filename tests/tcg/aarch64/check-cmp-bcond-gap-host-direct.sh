@@ -177,6 +177,27 @@ assert_no_use()
     fi
 }
 
+assert_drop()
+{
+    local label=$1
+    local producer_sym=$2
+    local producer_addr
+
+    producer_addr=$(sym_addr "$producer_sym")
+    rg -q "A64 cmp-pending drop producer_pc=0x${producer_addr}\\b" "$log" \
+        || die "expected cmp-pending drop for $label"
+}
+
+assert_recorded_drop()
+{
+    local label=$1
+    local producer_sym=$2
+
+    assert_record "$label" "$producer_sym"
+    assert_no_use "$label" "$producer_sym"
+    assert_drop "$label" "$producer_sym"
+}
+
 assert_direct_positive()
 {
     local label=$1
@@ -199,8 +220,8 @@ assert_direct_positive "cmn gap8" cmn_gap8_producer cmn_gap8_branch 9
 assert_no_use "non-whitelist gap" cmp_bad_gap_producer
 assert_no_use "flags writer gap" cmp_flags_writer_producer
 assert_no_use "gap overflow" cmp_gap9_producer
-assert_no_use "page boundary" cmp_page_boundary_producer
-assert_no_use "direct control-flow cut" cmp_direct_cut_producer
+assert_recorded_drop "page boundary" cmp_page_boundary_producer
+assert_recorded_drop "direct control-flow cut" cmp_direct_cut_producer
 
 assert_record "adjacent precedence" cmp_adjacent_precedence_producer
 assert_use "adjacent precedence" cmp_adjacent_precedence_producer \
@@ -213,7 +234,7 @@ rg -q 'A64 cmp-pending record pc=0x' "$log" \
     || die "expected at least one cmp-pending record marker"
 rg -q 'A64 cmp-pending use producer_pc=0x' "$log" \
     || die "expected at least one cmp-pending use marker"
-rg -q 'A64 cmp-pending (retire|drop) producer_pc=0x' "$log" \
-    || die "expected at least one cmp-pending retire/drop marker"
+rg -q 'A64 cmp-pending drop producer_pc=0x' "$log" \
+    || die "expected at least one cmp-pending drop marker"
 rg -q 'A64 cmp-pending summary tb_pc=0x' "$log" \
     || die "expected at least one cmp-pending summary marker"
