@@ -985,7 +985,10 @@ static bool a64_find_adjacent_plain_sbc_sub_same_width(DisasContext *s,
         return false;
     }
 
-    return a64_insn_is_plain_sbc_reg(insn) ||
+    if (a64_insn_is_plain_sbc_reg(insn)) {
+        return true;
+    }
+    return extract32(insn, 0, 5) != 31 &&
         a64_insn_is_plain_sbcs_reg(insn);
 }
 
@@ -1040,7 +1043,10 @@ static bool a64_find_adjacent_plain_adc_same_width(DisasContext *s, bool sf)
         return false;
     }
 
-    return a64_insn_is_plain_adc_reg(insn) ||
+    if (a64_insn_is_plain_adc_reg(insn)) {
+        return true;
+    }
+    return extract32(insn, 0, 5) != 31 &&
         a64_insn_is_plain_adcs_reg(insn);
 }
 #else
