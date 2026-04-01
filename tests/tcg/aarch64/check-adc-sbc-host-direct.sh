@@ -860,6 +860,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -871,6 +874,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -879,6 +885,9 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
     next;
 }
 /^OUT:/ {
@@ -914,6 +923,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -925,6 +937,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -933,6 +948,9 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
     next;
 }
 /^OUT:/ {
@@ -1193,6 +1211,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -1204,6 +1225,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -1212,6 +1236,9 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
     next;
 }
 /^OUT:/ {
@@ -1247,6 +1274,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -1258,6 +1288,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -1266,6 +1299,9 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
     next;
 }
 /^OUT:/ {
