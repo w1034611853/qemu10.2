@@ -964,6 +964,31 @@ static bool a64_find_adjacent_plain_sbc_sub(DisasContext *s,
     return false;
 }
 
+static bool a64_find_adjacent_plain_sbc_sub_same_width(DisasContext *s,
+                                                       bool sf)
+{
+    target_ulong pc = s->base.pc_next;
+    uint32_t insn;
+
+    if (!a64_sub_sbc_direct_enabled()) {
+        return false;
+    }
+    if (s->base.max_insns - s->base.num_insns <= 0) {
+        return false;
+    }
+    if (!translator_is_same_page(&s->base, pc)) {
+        return false;
+    }
+
+    insn = arm_ldl_code(s->env, &s->base, pc, s->sctlr_b);
+    /* Phase A1 only chains SBCS into a same-width plain SBC. */
+    if (extract32(insn, 31, 1) != sf) {
+        return false;
+    }
+
+    return a64_insn_is_plain_sbc_reg(insn);
+}
+
 static bool a64_find_adjacent_plain_adc(DisasContext *s,
                                            bool allow_setflags_consumer)
 {
@@ -994,6 +1019,30 @@ static bool a64_find_adjacent_plain_adc(DisasContext *s,
     }
     return false;
 }
+
+static bool a64_find_adjacent_plain_adc_same_width(DisasContext *s, bool sf)
+{
+    target_ulong pc = s->base.pc_next;
+    uint32_t insn;
+
+    if (!a64_add_adc_direct_enabled()) {
+        return false;
+    }
+    if (s->base.max_insns - s->base.num_insns <= 0) {
+        return false;
+    }
+    if (!translator_is_same_page(&s->base, pc)) {
+        return false;
+    }
+
+    insn = arm_ldl_code(s->env, &s->base, pc, s->sctlr_b);
+    /* Phase A1 only chains ADCS into a same-width plain ADC. */
+    if (extract32(insn, 31, 1) != sf) {
+        return false;
+    }
+
+    return a64_insn_is_plain_adc_reg(insn);
+}
 #else
 static bool a64_find_future_bcond_gap(DisasContext *s, uint8_t *gap_insns)
 {
@@ -1016,11 +1065,26 @@ static bool a64_find_adjacent_plain_sbc_sub(DisasContext *s,
     return false;
 }
 
+static bool a64_find_adjacent_plain_sbc_sub_same_width(DisasContext *s,
+                                                       bool sf)
+{
+    (void)s;
+    (void)sf;
+    return false;
+}
+
 static bool a64_find_adjacent_plain_adc(DisasContext *s,
                                          bool allow_setflags_consumer)
 {
     (void)s;
     (void)allow_setflags_consumer;
+    return false;
+}
+
+static bool a64_find_adjacent_plain_adc_same_width(DisasContext *s, bool sf)
+{
+    (void)s;
+    (void)sf;
     return false;
 }
 #endif
@@ -11654,9 +11718,11 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
     }
     if (setflags && a->rd != 31) {
         if (is_sub) {
-            materialized_sbc_sbc = a64_find_adjacent_plain_sbc_sub(s, false);
+            materialized_sbc_sbc =
+                a64_find_adjacent_plain_sbc_sub_same_width(s, a->sf);
         } else {
-            materialized_adc_adc = a64_find_adjacent_plain_adc(s, false);
+            materialized_adc_adc =
+                a64_find_adjacent_plain_adc_same_width(s, a->sf);
         }
     }
 
