@@ -981,12 +981,12 @@ static bool a64_find_adjacent_plain_sbc_sub_same_width(DisasContext *s,
     }
 
     insn = arm_ldl_code(s->env, &s->base, pc, s->sctlr_b);
-    /* Phase A1 only chains SBCS into a same-width plain SBC. */
     if (extract32(insn, 31, 1) != sf) {
         return false;
     }
 
-    return a64_insn_is_plain_sbc_reg(insn);
+    return a64_insn_is_plain_sbc_reg(insn) ||
+        a64_insn_is_plain_sbcs_reg(insn);
 }
 
 static bool a64_find_adjacent_plain_adc(DisasContext *s,
@@ -1036,12 +1036,12 @@ static bool a64_find_adjacent_plain_adc_same_width(DisasContext *s, bool sf)
     }
 
     insn = arm_ldl_code(s->env, &s->base, pc, s->sctlr_b);
-    /* Phase A1 only chains ADCS into a same-width plain ADC. */
     if (extract32(insn, 31, 1) != sf) {
         return false;
     }
 
-    return a64_insn_is_plain_adc_reg(insn);
+    return a64_insn_is_plain_adc_reg(insn) ||
+        a64_insn_is_plain_adcs_reg(insn);
 }
 #else
 static bool a64_find_future_bcond_gap(DisasContext *s, uint8_t *gap_insns)
@@ -2306,6 +2306,9 @@ static bool __attribute__((unused)) a64_try_emit_x86_add_adcs(DisasContext *s, b
                                       TCGv_i64 tcg_rd, TCGv_i64 tcg_rn,
                                       TCGv_i64 tcg_rm)
 {
+    uint32_t plain_cc_op = sf ? A64_X86_CC_ADD64 : A64_X86_CC_ADD32;
+    uint32_t carry_cc_op = sf ? A64_X86_CC_ADC64 : A64_X86_CC_ADC32;
+
     if (!a64_add_adc_direct_enabled()) {
         return false;
     }
@@ -2314,8 +2317,8 @@ static bool __attribute__((unused)) a64_try_emit_x86_add_adcs(DisasContext *s, b
     if (!s->a64_pending_cc.valid ||
         s->a64_pending_cc.rewind != NULL ||
         !a64_pending_cc_is_adjacent_to_curr_insn(s) ||
-        s->a64_pending_cc.cc_op != (sf ? A64_X86_CC_ADD64
-                                      : A64_X86_CC_ADD32)) {
+        (s->a64_pending_cc.cc_op != plain_cc_op &&
+         s->a64_pending_cc.cc_op != carry_cc_op)) {
         return false;
     }
 
@@ -2381,6 +2384,9 @@ static bool __attribute__((unused)) a64_try_emit_x86_cmp_sbcs(DisasContext *s, b
                                        TCGv_i64 tcg_rd, TCGv_i64 tcg_rn,
                                        TCGv_i64 tcg_rm)
 {
+    uint32_t plain_cc_op = sf ? A64_X86_CC_SUB64 : A64_X86_CC_SUB32;
+    uint32_t carry_cc_op = sf ? A64_X86_CC_SBC64 : A64_X86_CC_SBC32;
+
     /* Check pending_cc is valid and is a sub-type operation */
     if (!s->a64_pending_cc.valid) {
         return false;
@@ -2391,8 +2397,8 @@ static bool __attribute__((unused)) a64_try_emit_x86_cmp_sbcs(DisasContext *s, b
     if (!a64_pending_cc_is_adjacent_to_curr_insn(s)) {
         return false;
     }
-    if (s->a64_pending_cc.cc_op != (sf ? A64_X86_CC_SUB64
-                                      : A64_X86_CC_SUB32)) {
+    if (s->a64_pending_cc.cc_op != plain_cc_op &&
+        s->a64_pending_cc.cc_op != carry_cc_op) {
         return false;
     }
 
