@@ -1381,6 +1381,22 @@ static bool a64_cmp_cond_to_x86_jcc(int *jcc, int cc)
         return false;
     }
 }
+
+static bool a64_bcond_cc_supported_for_add_direct(int cc)
+{
+    TCGCond cond;
+    int jcc;
+
+    return a64_cmp_cond_to_tcg(&cond, cc) ||
+           a64_cmp_cond_to_x86_jcc(&jcc, cc);
+}
+#else
+static bool a64_bcond_cc_supported_for_add_direct(int cc)
+{
+    TCGCond cond;
+
+    return a64_cmp_cond_to_tcg(&cond, cc);
+}
 #endif
 
 static bool a64_try_set_cmp_cond_bool_i32(DisasContext *s, int cc, TCGv_i32 dst)
@@ -2049,6 +2065,42 @@ static void a64_emit_x86_add_brcond_capture_rawflags_i32(TCGCond cond,
     a64_add_label_use(label, op);
 }
 
+static void a64_emit_x86_add_jcc_capture_rawflags_i64(int jcc, TCGv_i64 lhs,
+                                                      TCGv_i64 rhs,
+                                                      TCGLabel *label)
+{
+    TCGv_i64 dst = tcg_temp_new_i64();
+    TCGOp *op;
+
+    tcg_gen_mov_i64(dst, lhs);
+    op = tcg_emit_op(INDEX_op_x86_add_jcc_capture_rawflags, 5);
+    TCGOP_TYPE(op) = TCG_TYPE_I64;
+    tcg_set_insn_param(op, 0, tcgv_i64_arg(dst));
+    tcg_set_insn_param(op, 1, tcgv_i64_arg(rhs));
+    tcg_set_insn_param(op, 2, jcc);
+    tcg_set_insn_param(op, 3, label_arg(label));
+    tcg_set_insn_param(op, 4, offsetof(CPUARMState, x86_raw_flags));
+    a64_add_label_use(label, op);
+}
+
+static void a64_emit_x86_add_jcc_capture_rawflags_i32(int jcc, TCGv_i32 lhs,
+                                                      TCGv_i32 rhs,
+                                                      TCGLabel *label)
+{
+    TCGv_i32 dst = tcg_temp_new_i32();
+    TCGOp *op;
+
+    tcg_gen_mov_i32(dst, lhs);
+    op = tcg_emit_op(INDEX_op_x86_add_jcc_capture_rawflags, 5);
+    TCGOP_TYPE(op) = TCG_TYPE_I32;
+    tcg_set_insn_param(op, 0, tcgv_i32_arg(dst));
+    tcg_set_insn_param(op, 1, tcgv_i32_arg(rhs));
+    tcg_set_insn_param(op, 2, jcc);
+    tcg_set_insn_param(op, 3, label_arg(label));
+    tcg_set_insn_param(op, 4, offsetof(CPUARMState, x86_raw_flags));
+    a64_add_label_use(label, op);
+}
+
 static void a64_emit_x86_cmp_sbb_capture_cmp_rawflags_i64(TCGv_i64 dst,
                                                           TCGv_i64 src,
                                                           TCGv_i64 cmp_lhs,
@@ -2137,9 +2189,6 @@ static bool a64_try_emit_x86_cmp_bcond(DisasContext *s, int cc,
         a64_try_rewind_adjacent_cmp(s, use_tcg_cond ? "B.cond-x86-tcg"
                                                     : "B.cond-x86-jcc");
     }
-    if (add_like && !use_tcg_cond) {
-        return false;
-    }
     reset_btype(s);
     a64_cmp_note_consume(s, use_tcg_cond ? "B.cond-x86-tcg"
                                          : "B.cond-x86-jcc");
@@ -2158,18 +2207,28 @@ static bool a64_try_emit_x86_cmp_bcond(DisasContext *s, int cc,
     }
 
     if (add_like && s->a64_pending_cc.sf) {
-        a64_emit_x86_add_brcond_capture_rawflags_i64(cond,
-                                                     s->a64_pending_cc.lhs,
-                                                     s->a64_pending_cc.rhs,
-                                                     match.label);
+        if (use_tcg_cond) {
+            a64_emit_x86_add_brcond_capture_rawflags_i64(
+                cond, s->a64_pending_cc.lhs, s->a64_pending_cc.rhs,
+                match.label);
+        } else {
+            a64_emit_x86_add_jcc_capture_rawflags_i64(
+                jcc, s->a64_pending_cc.lhs, s->a64_pending_cc.rhs,
+                match.label);
+        }
     } else if (add_like) {
         TCGv_i32 lhs = tcg_temp_new_i32();
         TCGv_i32 rhs = tcg_temp_new_i32();
 
         tcg_gen_extrl_i64_i32(lhs, s->a64_pending_cc.lhs);
         tcg_gen_extrl_i64_i32(rhs, s->a64_pending_cc.rhs);
-        a64_emit_x86_add_brcond_capture_rawflags_i32(cond, lhs, rhs,
-                                                     match.label);
+        if (use_tcg_cond) {
+            a64_emit_x86_add_brcond_capture_rawflags_i32(cond, lhs, rhs,
+                                                         match.label);
+        } else {
+            a64_emit_x86_add_jcc_capture_rawflags_i32(jcc, lhs, rhs,
+                                                      match.label);
+        }
     } else if (s->a64_pending_cc.sf) {
         if (use_tcg_cond) {
             a64_emit_x86_cmp_brcond_i64(cond, s->a64_pending_cc.lhs,
@@ -7509,7 +7568,6 @@ static bool do_addsub_imm(DisasContext *s, arg_rri_sf *a,
     bool materialized_adc_add = false;
     uint8_t gap_insns = 0;
     int future_bcond_cc = -1;
-    TCGCond future_bcond_cond;
     TCGv_i64 tcg_rn = read_cpu_reg_sp(s, a->rn, a->sf);
     TCGv_i64 tcg_imm = tcg_constant_i64(a->imm);
     TCGv_i64 tcg_pending_imm = tcg_imm;
@@ -7525,7 +7583,7 @@ static bool do_addsub_imm(DisasContext *s, arg_rri_sf *a,
         lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns,
                                                    &future_bcond_cc);
         if (lazy_bcond_cmp &&
-            !a64_cmp_cond_to_tcg(&future_bcond_cond, future_bcond_cc)) {
+            !a64_bcond_cc_supported_for_add_direct(future_bcond_cc)) {
             lazy_bcond_cmp = false;
         }
         if (!lazy_bcond_cmp && a->sf) {
@@ -11569,7 +11627,6 @@ static bool do_addsub_ext(DisasContext *s, arg_addsub_ext *a,
     bool materialized_adc_add = false;
     uint8_t gap_insns = 0;
     int future_bcond_cc = -1;
-    TCGCond future_bcond_cond;
     TCGv_i64 tcg_rm, tcg_rn, tcg_rd = NULL, tcg_result;
 
     if (a->sa > 4) {
@@ -11585,7 +11642,7 @@ static bool do_addsub_ext(DisasContext *s, arg_addsub_ext *a,
         lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns,
                                                    &future_bcond_cc);
         if (lazy_bcond_cmp &&
-            !a64_cmp_cond_to_tcg(&future_bcond_cond, future_bcond_cc)) {
+            !a64_bcond_cc_supported_for_add_direct(future_bcond_cc)) {
             lazy_bcond_cmp = false;
         }
         if (!lazy_bcond_cmp) {
@@ -11676,7 +11733,6 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
     bool materialized_adc_add = false;
     uint8_t gap_insns = 0;
     int future_bcond_cc = -1;
-    TCGCond future_bcond_cond;
     TCGv_i64 tcg_rd = NULL, tcg_rn, tcg_rm, tcg_result;
 
     if (a->st == 3 || (!a->sf && (a->sa & 32))) {
@@ -11692,7 +11748,7 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
         lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns,
                                                    &future_bcond_cc);
         if (lazy_bcond_cmp &&
-            !a64_cmp_cond_to_tcg(&future_bcond_cond, future_bcond_cc)) {
+            !a64_bcond_cc_supported_for_add_direct(future_bcond_cc)) {
             lazy_bcond_cmp = false;
         }
         if (!lazy_bcond_cmp) {
