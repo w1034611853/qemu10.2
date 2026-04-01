@@ -729,11 +729,17 @@ static void a64_clear_pending_cc_producer(DisasContext *s)
     };
 }
 
+enum {
+    A64_CMP_PENDING_GAP_MAX = 8,
+};
+
 static void a64_record_cmp_for_bcond(DisasContext *s, bool sf,
                                      TCGv_i64 lhs, TCGv_i64 rhs,
                                      TCGOp *rewind, TCGOp *end,
                                      uint32_t cc_op, uint8_t gap_insns)
 {
+    tcg_debug_assert(gap_insns <= A64_CMP_PENDING_GAP_MAX);
+
     a64_cmp_note_overwrite(s);
     s->a64_pending_cc.valid = true;
     s->a64_pending_cc.keep = true;
@@ -840,10 +846,6 @@ static bool a64_insn_overwrites_nzcv_immediate(uint32_t insn)
 }
 
 #if defined(__i386__) || defined(__x86_64__)
-enum {
-    A64_CMP_PENDING_GAP_MAX = 8,
-};
-
 static bool a64_insn_is_cmp_gap_safe(uint32_t insn)
 {
     uint32_t opc;
@@ -890,6 +892,8 @@ static bool a64_find_future_bcond_gap(DisasContext *s, uint8_t *gap_insns)
     target_ulong pc = s->base.pc_next;
     int remaining = s->base.max_insns - s->base.num_insns;
     int cc;
+
+    *gap_insns = 0;
 
     for (int gap = 0; gap < remaining && gap <= A64_CMP_PENDING_GAP_MAX;
          gap++, pc += 4) {
@@ -1094,6 +1098,30 @@ static bool a64_find_adjacent_plain_adc_same_width(DisasContext *s, bool sf)
     return false;
 }
 #endif
+
+static bool a64_pending_cc_can_cross_whitelist_insn(DisasContext *s)
+{
+    return s->a64_pending_cc.rewind == NULL &&
+           s->a64_pending_cc.gap_insns > 0 &&
+           a64_insn_is_cmp_gap_safe(s->insn);
+}
+
+static void a64_finish_pending_cc_lifetime(DisasContext *s)
+{
+    if (!s->a64_pending_cc.valid || s->a64_pending_cc.keep) {
+        return;
+    }
+
+    if (!s->a64_pending_cc.consumed &&
+        a64_pending_cc_can_cross_whitelist_insn(s)) {
+        s->a64_pending_cc.gap_insns--;
+        s->a64_pending_cc.keep = true;
+        return;
+    }
+
+    a64_cmp_note_drop(s);
+    a64_clear_pending_cc_producer(s);
+}
 
 static void a64_split_flags_get_n(TCGv_i32 dst)
 {
@@ -11625,8 +11653,7 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
     }
 
     if (lazy_bcond_cmp || lazy_sbc_cmp || lazy_adc_add ||
-        materialized_sbc_sub ||
-        materialized_adc_add) {
+        materialized_sbc_sub || materialized_adc_add) {
         A64PendingCCProducerKind kind = A64_PENDING_CC_REWINDABLE_CMP;
 
         a64_record_cmp_for_bcond(s, a->sf, tcg_rn, tcg_rm,
@@ -11793,7 +11820,7 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
                                      NULL, tcg_last_op(),
                                      a->sf ? A64_X86_CC_SUB64
                                            : A64_X86_CC_SUB32,
-                                     gap_insns);
+                                     lazy_bcond_cmp ? gap_insns : 0);
         }
     }
 
@@ -13638,16 +13665,7 @@ static void aarch64_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
         unallocated_encoding(s);
     }
 
-    if (!s->a64_pending_cc.keep && s->a64_pending_cc.valid &&
-        s->a64_pending_cc.gap_insns > 0) {
-        s->a64_pending_cc.gap_insns--;
-        s->a64_pending_cc.keep = true;
-    }
-
-    if (!s->a64_pending_cc.keep) {
-        a64_cmp_note_drop(s);
-        a64_clear_pending_cc_producer(s);
-    }
+    a64_finish_pending_cc_lifetime(s);
 
     /*
      * After execution of most insns, btype is reset to 0.
@@ -13671,6 +13689,10 @@ static void aarch64_tr_tb_stop(DisasContextBase *dcbase, CPUState *cpu)
 {
     DisasContext *dc = container_of(dcbase, DisasContext, base);
 
+    if (dc->a64_pending_cc.valid) {
+        a64_cmp_note_drop(dc);
+        a64_clear_pending_cc_producer(dc);
+    }
     a64_cmp_log_tb_summary(dc);
 
     if (unlikely(dc->ss_active)) {
