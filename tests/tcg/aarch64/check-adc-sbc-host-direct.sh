@@ -21,6 +21,19 @@ phase_a2_extract_diag()
     rg -n -C 4 -- "$guest_pat2" "$log" 1>&2 || true
 }
 
+phase_a2_assert_single_out()
+{
+    local label=$1
+    local block=$2
+    local out_count=0
+
+    out_count=$(rg -c "^OUT:" "$block" 2>/dev/null || true)
+    out_count=${out_count:-0}
+    if [ "$out_count" -ne 1 ]; then
+        die "A2 extract for $label produced $out_count OUT headers (expected 1)"
+    fi
+}
+
 [ $# -eq 2 ] || die "usage: $0 <qemu-bin> <exe>"
 
 qemu_bin=$1
@@ -156,6 +169,10 @@ BEGIN {
     next;
 }
 /^OUT:/ {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
     in_guest = 0;
     in_host = 1;
     host = $0 "\n";
@@ -219,6 +236,10 @@ BEGIN {
     next;
 }
 /^OUT:/ {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
     in_guest = 0;
     in_host = 1;
     host = $0 "\n";
@@ -282,6 +303,10 @@ BEGIN {
     next;
 }
 /^OUT:/ {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
     in_guest = 0;
     in_host = 1;
     host = $0 "\n";
@@ -345,6 +370,10 @@ BEGIN {
     next;
 }
 /^OUT:/ {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
     in_guest = 0;
     in_host = 1;
     host = $0 "\n";
@@ -408,6 +437,10 @@ BEGIN {
     next;
 }
 /^OUT:/ {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
     in_guest = 0;
     in_host = 1;
     host = $0 "\n";
@@ -471,6 +504,10 @@ BEGIN {
     next;
 }
 /^OUT:/ {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
     in_guest = 0;
     in_host = 1;
     host = $0 "\n";
@@ -534,6 +571,10 @@ BEGIN {
     next;
 }
 /^OUT:/ {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
     in_guest = 0;
     in_host = 1;
     host = $0 "\n";
@@ -597,6 +638,10 @@ BEGIN {
     next;
 }
 /^OUT:/ {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
     in_guest = 0;
     in_host = 1;
     host = $0 "\n";
@@ -2484,24 +2529,19 @@ END {
 awk '
 BEGIN {
     in_guest = 0;
-    in_host = 0;
     want = 0;
-    guest = "";
-    host = "";
+    emit = 0;
     guest_line = 0;
     adcs_producer = 0;
     adcs_consumer = 0;
 }
-/^----------------$/ {
-    if (want && host != "") {
-        print host;
+/^----------------/ {
+    if (emit) {
         exit 0;
     }
     in_guest = 0;
-    in_host = 0;
     want = 0;
-    guest = "";
-    host = "";
+    emit = 0;
     guest_line = 0;
     adcs_producer = 0;
     adcs_consumer = 0;
@@ -2509,40 +2549,43 @@ BEGIN {
 }
 /^IN:[[:space:]]*$/ {
     in_guest = 1;
-    in_host = 0;
-    guest = "";
-    host = "";
     want = 0;
+    emit = 0;
     guest_line = 0;
     adcs_producer = 0;
     adcs_consumer = 0;
     next;
 }
 /^OUT:/ {
+    if (emit) {
+        exit 0;
+    }
     in_guest = 0;
-    in_host = 1;
-    host = $0 "\n";
     if (adcs_producer > 0 && adcs_consumer == adcs_producer + 1) {
         want = 1;
+    }
+    if (want) {
+        emit = 1;
+        print;
     }
     next;
 }
 {
+    if (emit) {
+        print;
+        next;
+    }
     if (in_guest) {
         guest_line++;
-        guest = guest $0 "\n";
         if ($0 ~ /adcs[[:space:]]+x5, x1, x2/) {
             adcs_producer = guest_line;
         } else if ($0 ~ /adcs[[:space:]]+x8, x6, x7/) {
             adcs_consumer = guest_line;
         }
-    } else if (in_host) {
-        host = host $0 "\n";
     }
 }
 END {
-    if (want && host != "") {
-        print host;
+    if (emit) {
         exit 0;
     }
     exit 1;
@@ -2552,29 +2595,25 @@ END {
         'adcs[[:space:]]+x5, x1, x2' 'adcs[[:space:]]+x8, x6, x7'
     die "failed to locate adjacent ADCS->ADCS host block"
 }
+phase_a2_assert_single_out "ADCS->ADCS" "$adcs_adcs_block"
 
 # ADCS32 -> ADCS32: adcs w5, w1, w2 / adcs w8, w6, w7 (phase A2 truly adjacent)
 awk '
 BEGIN {
     in_guest = 0;
-    in_host = 0;
     want = 0;
-    guest = "";
-    host = "";
+    emit = 0;
     guest_line = 0;
     adcs_producer = 0;
     adcs_consumer = 0;
 }
-/^----------------$/ {
-    if (want && host != "") {
-        print host;
+/^----------------/ {
+    if (emit) {
         exit 0;
     }
     in_guest = 0;
-    in_host = 0;
     want = 0;
-    guest = "";
-    host = "";
+    emit = 0;
     guest_line = 0;
     adcs_producer = 0;
     adcs_consumer = 0;
@@ -2582,40 +2621,43 @@ BEGIN {
 }
 /^IN:[[:space:]]*$/ {
     in_guest = 1;
-    in_host = 0;
-    guest = "";
-    host = "";
     want = 0;
+    emit = 0;
     guest_line = 0;
     adcs_producer = 0;
     adcs_consumer = 0;
     next;
 }
 /^OUT:/ {
+    if (emit) {
+        exit 0;
+    }
     in_guest = 0;
-    in_host = 1;
-    host = $0 "\n";
     if (adcs_producer > 0 && adcs_consumer == adcs_producer + 1) {
         want = 1;
+    }
+    if (want) {
+        emit = 1;
+        print;
     }
     next;
 }
 {
+    if (emit) {
+        print;
+        next;
+    }
     if (in_guest) {
         guest_line++;
-        guest = guest $0 "\n";
         if ($0 ~ /adcs[[:space:]]+w5, w1, w2/) {
             adcs_producer = guest_line;
         } else if ($0 ~ /adcs[[:space:]]+w8, w6, w7/) {
             adcs_consumer = guest_line;
         }
-    } else if (in_host) {
-        host = host $0 "\n";
     }
 }
 END {
-    if (want && host != "") {
-        print host;
+    if (emit) {
         exit 0;
     }
     exit 1;
@@ -2625,6 +2667,7 @@ END {
         'adcs[[:space:]]+w5, w1, w2' 'adcs[[:space:]]+w8, w6, w7'
     die "failed to locate adjacent ADCS32->ADCS32 host block"
 }
+phase_a2_assert_single_out "ADCS32->ADCS32" "$adcs_adcs32_block"
 
 # SBCS reg -> SBC: sbcs x5, x1, x2 / sbc x8, x6, x7 (真正相邻)
 awk '
@@ -2768,24 +2811,19 @@ END {
 awk '
 BEGIN {
     in_guest = 0;
-    in_host = 0;
     want = 0;
-    guest = "";
-    host = "";
+    emit = 0;
     guest_line = 0;
     sbcs_producer = 0;
     sbcs_consumer = 0;
 }
-/^----------------$/ {
-    if (want && host != "") {
-        print host;
+/^----------------/ {
+    if (emit) {
         exit 0;
     }
     in_guest = 0;
-    in_host = 0;
     want = 0;
-    guest = "";
-    host = "";
+    emit = 0;
     guest_line = 0;
     sbcs_producer = 0;
     sbcs_consumer = 0;
@@ -2793,40 +2831,43 @@ BEGIN {
 }
 /^IN:[[:space:]]*$/ {
     in_guest = 1;
-    in_host = 0;
-    guest = "";
-    host = "";
     want = 0;
+    emit = 0;
     guest_line = 0;
     sbcs_producer = 0;
     sbcs_consumer = 0;
     next;
 }
 /^OUT:/ {
+    if (emit) {
+        exit 0;
+    }
     in_guest = 0;
-    in_host = 1;
-    host = $0 "\n";
     if (sbcs_producer > 0 && sbcs_consumer == sbcs_producer + 1) {
         want = 1;
+    }
+    if (want) {
+        emit = 1;
+        print;
     }
     next;
 }
 {
+    if (emit) {
+        print;
+        next;
+    }
     if (in_guest) {
         guest_line++;
-        guest = guest $0 "\n";
         if ($0 ~ /sbcs[[:space:]]+x5, x1, x2/) {
             sbcs_producer = guest_line;
         } else if ($0 ~ /sbcs[[:space:]]+x8, x6, x7/) {
             sbcs_consumer = guest_line;
         }
-    } else if (in_host) {
-        host = host $0 "\n";
     }
 }
 END {
-    if (want && host != "") {
-        print host;
+    if (emit) {
         exit 0;
     }
     exit 1;
@@ -2836,29 +2877,25 @@ END {
         'sbcs[[:space:]]+x5, x1, x2' 'sbcs[[:space:]]+x8, x6, x7'
     die "failed to locate adjacent SBCS->SBCS host block"
 }
+phase_a2_assert_single_out "SBCS->SBCS" "$sbcs_sbcs_block"
 
 # SBCS32 -> SBCS32: sbcs w5, w1, w2 / sbcs w8, w6, w7 (phase A2 truly adjacent)
 awk '
 BEGIN {
     in_guest = 0;
-    in_host = 0;
     want = 0;
-    guest = "";
-    host = "";
+    emit = 0;
     guest_line = 0;
     sbcs_producer = 0;
     sbcs_consumer = 0;
 }
-/^----------------$/ {
-    if (want && host != "") {
-        print host;
+/^----------------/ {
+    if (emit) {
         exit 0;
     }
     in_guest = 0;
-    in_host = 0;
     want = 0;
-    guest = "";
-    host = "";
+    emit = 0;
     guest_line = 0;
     sbcs_producer = 0;
     sbcs_consumer = 0;
@@ -2866,40 +2903,43 @@ BEGIN {
 }
 /^IN:[[:space:]]*$/ {
     in_guest = 1;
-    in_host = 0;
-    guest = "";
-    host = "";
     want = 0;
+    emit = 0;
     guest_line = 0;
     sbcs_producer = 0;
     sbcs_consumer = 0;
     next;
 }
 /^OUT:/ {
+    if (emit) {
+        exit 0;
+    }
     in_guest = 0;
-    in_host = 1;
-    host = $0 "\n";
     if (sbcs_producer > 0 && sbcs_consumer == sbcs_producer + 1) {
         want = 1;
+    }
+    if (want) {
+        emit = 1;
+        print;
     }
     next;
 }
 {
+    if (emit) {
+        print;
+        next;
+    }
     if (in_guest) {
         guest_line++;
-        guest = guest $0 "\n";
         if ($0 ~ /sbcs[[:space:]]+w5, w1, w2/) {
             sbcs_producer = guest_line;
         } else if ($0 ~ /sbcs[[:space:]]+w8, w6, w7/) {
             sbcs_consumer = guest_line;
         }
-    } else if (in_host) {
-        host = host $0 "\n";
     }
 }
 END {
-    if (want && host != "") {
-        print host;
+    if (emit) {
         exit 0;
     }
     exit 1;
@@ -2909,6 +2949,7 @@ END {
         'sbcs[[:space:]]+w5, w1, w2' 'sbcs[[:space:]]+w8, w6, w7'
     die "failed to locate adjacent SBCS32->SBCS32 host block"
 }
+phase_a2_assert_single_out "SBCS32->SBCS32" "$sbcs_sbcs32_block"
 
 # ADCS32 -> ADC64 mixed-width negative block
 awk '
