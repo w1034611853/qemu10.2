@@ -213,8 +213,12 @@ _start:
     bl      block_subs_ext_sbcs64      // SUBS ext -> SBCS (adjacent)
     bl      block_adcs_adc64
     bl      block_adcs_adc32
+    bl      block_adcs_adcs64
+    bl      block_adcs_adcs32
     bl      block_sbcs_sbc64
     bl      block_sbcs_sbc32
+    bl      block_sbcs_sbcs64
+    bl      block_sbcs_sbcs32
     bl      block_adcs32_adc64
     bl      block_sbcs_xzr_priority
     bl      block_cmn_adcs64_adjacent   // CMN->ADCS truly adjacent (narrowed)
@@ -481,6 +485,48 @@ block_adcs_adc32:
     b.ne    fail
     ret
 
+// ADCS: adcs(rd) producer -> adcs consumer (64-bit, truly adjacent)
+block_adcs_adcs64:
+    mov     x0, #5
+    mov     x6, #1
+    lsl     x6, x6, #63       // INT64_MIN
+    sub     x6, x6, #1        // INT64_MAX
+    mov     x7, #0
+    cmp     x0, #3            // Seed C=1 for the producer
+    movn    x1, #0            // x1 = -1
+    mov     x2, #0
+    adcs    x5, x1, x2        // -1+0+1=0, NZCV=0x6
+    adcs    x8, x6, x7        // INT64_MAX+0+1=INT64_MIN, NZCV=0x9
+    b.pl    fail              // Final N=1 must come from the consumer
+    b.cs    fail              // Final C=0 must come from the consumer
+    b.vc    fail              // Final V=1 must come from the consumer
+    mov     x9, #1
+    lsl     x9, x9, #63
+    cmp     x8, x9
+    b.ne    fail
+    ret
+
+// ADCS: adcs(rd) producer -> adcs consumer (32-bit, truly adjacent)
+block_adcs_adcs32:
+    mov     x0, #5
+    mov     w6, #1
+    lsl     w6, w6, #31       // INT32_MIN
+    sub     w6, w6, #1        // INT32_MAX
+    mov     w7, #0
+    cmp     x0, #3            // Seed C=1 for the producer
+    movn    w1, #0            // w1 = 0xffffffff
+    mov     w2, #0
+    adcs    w5, w1, w2        // 0xffffffff+0+1=0, NZCV=0x6
+    adcs    w8, w6, w7        // INT32_MAX+0+1=INT32_MIN, NZCV=0x9
+    b.pl    fail              // Final N=1 must come from the consumer
+    b.cs    fail              // Final C=0 must come from the consumer
+    b.vc    fail              // Final V=1 must come from the consumer
+    mov     w9, #1
+    lsl     w9, w9, #31
+    cmp     w8, w9
+    b.ne    fail
+    ret
+
 // SBCS: sbcs(rd) producer -> sbc consumer (64-bit, truly adjacent)
 block_sbcs_sbc64:
     mov     x0, #5
@@ -510,6 +556,40 @@ block_sbcs_sbc32:
     b.pl    fail              // Producer N=1 must survive plain SBC
     b.cs    fail              // Producer C=0 must survive plain SBC
     cmp     w8, #9
+    b.ne    fail
+    ret
+
+// SBCS: sbcs(rd) producer -> sbcs consumer (64-bit, truly adjacent)
+block_sbcs_sbcs64:
+    mov     x0, #5
+    mov     x6, #3
+    mov     x7, #2
+    cmp     x0, #3            // Seed C=1 for the producer
+    mov     x1, #1
+    mov     x2, #3
+    sbcs    x5, x1, x2        // 1-3-0=-2, NZCV=0x8
+    sbcs    x8, x6, x7        // 3-2-1=0, NZCV=0x6
+    b.ne    fail              // Final Z=1 must come from the consumer
+    b.cc    fail              // Final C=1 must come from the consumer
+    b.mi    fail              // Final N=0 must come from the consumer
+    cmp     x8, #0
+    b.ne    fail
+    ret
+
+// SBCS: sbcs(rd) producer -> sbcs consumer (32-bit, truly adjacent)
+block_sbcs_sbcs32:
+    mov     x0, #5
+    mov     w6, #3
+    mov     w7, #2
+    cmp     x0, #3            // Seed C=1 for the producer
+    mov     w1, #1
+    mov     w2, #3
+    sbcs    w5, w1, w2        // 1-3-0=-2, NZCV=0x8
+    sbcs    w8, w6, w7        // 3-2-1=0, NZCV=0x6
+    b.ne    fail              // Final Z=1 must come from the consumer
+    b.cc    fail              // Final C=1 must come from the consumer
+    b.mi    fail              // Final N=0 must come from the consumer
+    cmp     w8, #0
     b.ne    fail
     ret
 

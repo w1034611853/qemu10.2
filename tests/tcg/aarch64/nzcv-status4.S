@@ -1923,6 +1923,62 @@ t_aa_after:
     expect_nzcv 0x8, 0xb6
     expect_reg_imm w8, 9, 0xb6
 
+    /* 0xb7: ADCS64 -> ADCS64 -> MRS NZCV returns consumer flags */
+    mov     x0, #5
+    mov     x6, #1
+    lsl     x6, x6, #63       /* INT64_MIN */
+    sub     x6, x6, #1        /* INT64_MAX */
+    mov     x7, #0
+    mov     x9, #1
+    lsl     x9, x9, #63
+    cmp     x0, #3            /* Seed C = 1 */
+    movn    x1, #0            /* -1 */
+    mov     x2, #0
+    adcs    x5, x1, x2        /* Producer: NZCV = 0x6 */
+    adcs    x8, x6, x7        /* Consumer: NZCV = 0x9 */
+    expect_nzcv 0x9, 0xb7
+    expect_reg_reg x8, x9, 0xb7
+
+    /* 0xb8: SBCS64 -> SBCS64 -> MRS NZCV returns consumer flags */
+    mov     x0, #5
+    mov     x6, #3
+    mov     x7, #2
+    cmp     x0, #3            /* Seed C = 1 */
+    mov     x1, #1
+    mov     x2, #3
+    sbcs    x5, x1, x2        /* Producer: NZCV = 0x8 */
+    sbcs    x8, x6, x7        /* Consumer: NZCV = 0x6 */
+    expect_nzcv 0x6, 0xb8
+    expect_reg_imm x8, 0, 0xb8
+
+    /* 0xb9: ADCS32 -> ADCS32 -> MRS NZCV returns consumer flags */
+    mov     x0, #5
+    mov     w6, #1
+    lsl     w6, w6, #31       /* INT32_MIN */
+    sub     w6, w6, #1        /* INT32_MAX */
+    mov     w7, #0
+    mov     w9, #1
+    lsl     w9, w9, #31
+    cmp     x0, #3            /* Seed C = 1 */
+    movn    w1, #0            /* 0xffffffff */
+    mov     w2, #0
+    adcs    w5, w1, w2        /* Producer: NZCV = 0x6 */
+    adcs    w8, w6, w7        /* Consumer: NZCV = 0x9 */
+    expect_nzcv 0x9, 0xb9
+    expect_reg_reg w8, w9, 0xb9
+
+    /* 0xba: SBCS32 -> SBCS32 -> MRS NZCV returns consumer flags */
+    mov     x0, #5
+    mov     w6, #3
+    mov     w7, #2
+    cmp     x0, #3            /* Seed C = 1 */
+    mov     w1, #1
+    mov     w2, #3
+    sbcs    w5, w1, w2        /* Producer: NZCV = 0x8 */
+    sbcs    w8, w6, w7        /* Consumer: NZCV = 0x6 */
+    expect_nzcv 0x6, 0xba
+    expect_reg_imm w8, 0, 0xba
+
     b       after_shared_consumers
 
 shared_nzcv_consumer:

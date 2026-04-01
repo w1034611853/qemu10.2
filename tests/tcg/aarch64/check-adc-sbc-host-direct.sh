@@ -8,6 +8,19 @@ die()
     exit 1
 }
 
+phase_a2_extract_diag()
+{
+    local label=$1
+    local guest_pat1=$2
+    local guest_pat2=$3
+
+    echo "diagnostic: failed to extract $label from $log" 1>&2
+    echo "diagnostic: guest pattern 1: $guest_pat1" 1>&2
+    rg -n -C 4 -- "$guest_pat1" "$log" 1>&2 || true
+    echo "diagnostic: guest pattern 2: $guest_pat2" 1>&2
+    rg -n -C 4 -- "$guest_pat2" "$log" 1>&2 || true
+}
+
 [ $# -eq 2 ] || die "usage: $0 <qemu-bin> <exe>"
 
 qemu_bin=$1
@@ -54,8 +67,12 @@ subs_sbcs_block="${exe}.subs_sbcs.block"
 subs_sbcs32_block="${exe}.subs_sbcs32.block"
 adcs_adc_block="${exe}.adcs_adc.block"
 adcs_adc32_block="${exe}.adcs_adc32.block"
+adcs_adcs_block="${exe}.adcs_adcs.block"
+adcs_adcs32_block="${exe}.adcs_adcs32.block"
 sbcs_sbc_block="${exe}.sbcs_sbc.block"
 sbcs_sbc32_block="${exe}.sbcs_sbc32.block"
+sbcs_sbcs_block="${exe}.sbcs_sbcs.block"
+sbcs_sbcs32_block="${exe}.sbcs_sbcs32.block"
 adcs32_adc64_block="${exe}.adcs32_adc64.block"
 rm -f "$log"
 rm -f "$cmn_adc_block"
@@ -88,8 +105,12 @@ rm -f "$subs_sbcs_block"
 rm -f "$subs_sbcs32_block"
 rm -f "$adcs_adc_block"
 rm -f "$adcs_adc32_block"
+rm -f "$adcs_adcs_block"
+rm -f "$adcs_adcs32_block"
 rm -f "$sbcs_sbc_block"
 rm -f "$sbcs_sbc32_block"
+rm -f "$sbcs_sbcs_block"
+rm -f "$sbcs_sbcs32_block"
 rm -f "$adcs32_adc64_block"
 
 compare_like_ext_decode_re='\bshr[lq]\b|\band[lq]\b|\bxor[lq]\b|\bnot[lq]\b|\bset[bcae]\b'
@@ -2459,6 +2480,152 @@ END {
 }
 ' "$log" >"$adcs_adc32_block" || die "failed to locate adjacent ADCS32->ADC32 host block"
 
+# ADCS -> ADCS: adcs x5, x1, x2 / adcs x8, x6, x7 (phase A2 truly adjacent)
+awk '
+BEGIN {
+    in_guest = 0;
+    in_host = 0;
+    want = 0;
+    guest = "";
+    host = "";
+    guest_line = 0;
+    adcs_producer = 0;
+    adcs_consumer = 0;
+}
+/^----------------$/ {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
+    in_guest = 0;
+    in_host = 0;
+    want = 0;
+    guest = "";
+    host = "";
+    guest_line = 0;
+    adcs_producer = 0;
+    adcs_consumer = 0;
+    next;
+}
+/^IN:[[:space:]]*$/ {
+    in_guest = 1;
+    in_host = 0;
+    guest = "";
+    host = "";
+    want = 0;
+    guest_line = 0;
+    adcs_producer = 0;
+    adcs_consumer = 0;
+    next;
+}
+/^OUT:/ {
+    in_guest = 0;
+    in_host = 1;
+    host = $0 "\n";
+    if (adcs_producer > 0 && adcs_consumer == adcs_producer + 1) {
+        want = 1;
+    }
+    next;
+}
+{
+    if (in_guest) {
+        guest_line++;
+        guest = guest $0 "\n";
+        if ($0 ~ /adcs[[:space:]]+x5, x1, x2/) {
+            adcs_producer = guest_line;
+        } else if ($0 ~ /adcs[[:space:]]+x8, x6, x7/) {
+            adcs_consumer = guest_line;
+        }
+    } else if (in_host) {
+        host = host $0 "\n";
+    }
+}
+END {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
+    exit 1;
+}
+' "$log" >"$adcs_adcs_block" || {
+    phase_a2_extract_diag "adjacent ADCS->ADCS host block" \
+        'adcs[[:space:]]+x5, x1, x2' 'adcs[[:space:]]+x8, x6, x7'
+    die "failed to locate adjacent ADCS->ADCS host block"
+}
+
+# ADCS32 -> ADCS32: adcs w5, w1, w2 / adcs w8, w6, w7 (phase A2 truly adjacent)
+awk '
+BEGIN {
+    in_guest = 0;
+    in_host = 0;
+    want = 0;
+    guest = "";
+    host = "";
+    guest_line = 0;
+    adcs_producer = 0;
+    adcs_consumer = 0;
+}
+/^----------------$/ {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
+    in_guest = 0;
+    in_host = 0;
+    want = 0;
+    guest = "";
+    host = "";
+    guest_line = 0;
+    adcs_producer = 0;
+    adcs_consumer = 0;
+    next;
+}
+/^IN:[[:space:]]*$/ {
+    in_guest = 1;
+    in_host = 0;
+    guest = "";
+    host = "";
+    want = 0;
+    guest_line = 0;
+    adcs_producer = 0;
+    adcs_consumer = 0;
+    next;
+}
+/^OUT:/ {
+    in_guest = 0;
+    in_host = 1;
+    host = $0 "\n";
+    if (adcs_producer > 0 && adcs_consumer == adcs_producer + 1) {
+        want = 1;
+    }
+    next;
+}
+{
+    if (in_guest) {
+        guest_line++;
+        guest = guest $0 "\n";
+        if ($0 ~ /adcs[[:space:]]+w5, w1, w2/) {
+            adcs_producer = guest_line;
+        } else if ($0 ~ /adcs[[:space:]]+w8, w6, w7/) {
+            adcs_consumer = guest_line;
+        }
+    } else if (in_host) {
+        host = host $0 "\n";
+    }
+}
+END {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
+    exit 1;
+}
+' "$log" >"$adcs_adcs32_block" || {
+    phase_a2_extract_diag "adjacent ADCS32->ADCS32 host block" \
+        'adcs[[:space:]]+w5, w1, w2' 'adcs[[:space:]]+w8, w6, w7'
+    die "failed to locate adjacent ADCS32->ADCS32 host block"
+}
+
 # SBCS reg -> SBC: sbcs x5, x1, x2 / sbc x8, x6, x7 (真正相邻)
 awk '
 BEGIN {
@@ -2596,6 +2763,152 @@ END {
     exit 1;
 }
 ' "$log" >"$sbcs_sbc32_block" || die "failed to locate adjacent SBCS32->SBC32 host block"
+
+# SBCS -> SBCS: sbcs x5, x1, x2 / sbcs x8, x6, x7 (phase A2 truly adjacent)
+awk '
+BEGIN {
+    in_guest = 0;
+    in_host = 0;
+    want = 0;
+    guest = "";
+    host = "";
+    guest_line = 0;
+    sbcs_producer = 0;
+    sbcs_consumer = 0;
+}
+/^----------------$/ {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
+    in_guest = 0;
+    in_host = 0;
+    want = 0;
+    guest = "";
+    host = "";
+    guest_line = 0;
+    sbcs_producer = 0;
+    sbcs_consumer = 0;
+    next;
+}
+/^IN:[[:space:]]*$/ {
+    in_guest = 1;
+    in_host = 0;
+    guest = "";
+    host = "";
+    want = 0;
+    guest_line = 0;
+    sbcs_producer = 0;
+    sbcs_consumer = 0;
+    next;
+}
+/^OUT:/ {
+    in_guest = 0;
+    in_host = 1;
+    host = $0 "\n";
+    if (sbcs_producer > 0 && sbcs_consumer == sbcs_producer + 1) {
+        want = 1;
+    }
+    next;
+}
+{
+    if (in_guest) {
+        guest_line++;
+        guest = guest $0 "\n";
+        if ($0 ~ /sbcs[[:space:]]+x5, x1, x2/) {
+            sbcs_producer = guest_line;
+        } else if ($0 ~ /sbcs[[:space:]]+x8, x6, x7/) {
+            sbcs_consumer = guest_line;
+        }
+    } else if (in_host) {
+        host = host $0 "\n";
+    }
+}
+END {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
+    exit 1;
+}
+' "$log" >"$sbcs_sbcs_block" || {
+    phase_a2_extract_diag "adjacent SBCS->SBCS host block" \
+        'sbcs[[:space:]]+x5, x1, x2' 'sbcs[[:space:]]+x8, x6, x7'
+    die "failed to locate adjacent SBCS->SBCS host block"
+}
+
+# SBCS32 -> SBCS32: sbcs w5, w1, w2 / sbcs w8, w6, w7 (phase A2 truly adjacent)
+awk '
+BEGIN {
+    in_guest = 0;
+    in_host = 0;
+    want = 0;
+    guest = "";
+    host = "";
+    guest_line = 0;
+    sbcs_producer = 0;
+    sbcs_consumer = 0;
+}
+/^----------------$/ {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
+    in_guest = 0;
+    in_host = 0;
+    want = 0;
+    guest = "";
+    host = "";
+    guest_line = 0;
+    sbcs_producer = 0;
+    sbcs_consumer = 0;
+    next;
+}
+/^IN:[[:space:]]*$/ {
+    in_guest = 1;
+    in_host = 0;
+    guest = "";
+    host = "";
+    want = 0;
+    guest_line = 0;
+    sbcs_producer = 0;
+    sbcs_consumer = 0;
+    next;
+}
+/^OUT:/ {
+    in_guest = 0;
+    in_host = 1;
+    host = $0 "\n";
+    if (sbcs_producer > 0 && sbcs_consumer == sbcs_producer + 1) {
+        want = 1;
+    }
+    next;
+}
+{
+    if (in_guest) {
+        guest_line++;
+        guest = guest $0 "\n";
+        if ($0 ~ /sbcs[[:space:]]+w5, w1, w2/) {
+            sbcs_producer = guest_line;
+        } else if ($0 ~ /sbcs[[:space:]]+w8, w6, w7/) {
+            sbcs_consumer = guest_line;
+        }
+    } else if (in_host) {
+        host = host $0 "\n";
+    }
+}
+END {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
+    exit 1;
+}
+' "$log" >"$sbcs_sbcs32_block" || {
+    phase_a2_extract_diag "adjacent SBCS32->SBCS32 host block" \
+        'sbcs[[:space:]]+w5, w1, w2' 'sbcs[[:space:]]+w8, w6, w7'
+    die "failed to locate adjacent SBCS32->SBCS32 host block"
+}
 
 # ADCS32 -> ADC64 mixed-width negative block
 awk '
@@ -2892,6 +3205,112 @@ END {
 }
 ' "$sbcs_sbc32_block" || die "materialized SBCS32->SBC32 still has borrow decode glue between producer sbb and consumer sbb"
 
+# ------------------------------------------------------------------------
+# 3.2b 对 materialized ADCS/SBCS -> ADCS/SBCS 做 phase A2 direct 硬检查
+# ------------------------------------------------------------------------
+
+grep -Eq '\badcq\b' "$adcs_adcs_block" \
+    || die "missing host adcq for materialized ADCS->ADCS path"
+awk '
+/adcq/ && !seen_adc {
+    seen_adc = 1;
+    adc_count = 1;
+    next;
+}
+seen_adc && !seen_consumer && /adcq/ {
+    adc_count++;
+    seen_consumer = 1;
+    exit (bad || adc_count != 2) ? 1 : 0;
+}
+seen_adc && !seen_consumer &&
+(/\bshr[lq]\b/ || /\band[lq]\b/ || /\bxor[lq]\b/ ||
+ /\bnot[lq]\b/ || /\bset[bcae]\b/ || /add[ql][[:space:]]+\$-1,/) {
+    bad = 1;
+}
+END {
+    if (!seen_adc || !seen_consumer || bad || adc_count != 2) {
+        exit 1;
+    }
+}
+' "$adcs_adcs_block" || die "materialized ADCS->ADCS still has carry decode glue between producer adc and consumer adc"
+
+grep -Eq '\badcl\b' "$adcs_adcs32_block" \
+    || die "missing host adcl for materialized ADCS32->ADCS32 path"
+awk '
+/adcl/ && !seen_adc {
+    seen_adc = 1;
+    adc_count = 1;
+    next;
+}
+seen_adc && !seen_consumer && /adcl/ {
+    adc_count++;
+    seen_consumer = 1;
+    exit (bad || adc_count != 2) ? 1 : 0;
+}
+seen_adc && !seen_consumer &&
+(/\bshrl\b/ || /\bandl\b/ || /\bxorl\b/ ||
+ /\bnotl\b/ || /\bset[bcae]\b/ || /addl[[:space:]]+\$-1,/) {
+    bad = 1;
+}
+END {
+    if (!seen_adc || !seen_consumer || bad || adc_count != 2) {
+        exit 1;
+    }
+}
+' "$adcs_adcs32_block" || die "materialized ADCS32->ADCS32 still has carry decode glue between producer adcl and consumer adcl"
+
+grep -Eq '\bsbbq\b' "$sbcs_sbcs_block" \
+    || die "missing host sbbq for materialized SBCS->SBCS path"
+awk '
+/sbbq/ && !seen_sbb {
+    seen_sbb = 1;
+    sbb_count = 1;
+    next;
+}
+seen_sbb && !seen_consumer && /sbbq/ {
+    sbb_count++;
+    seen_consumer = 1;
+    exit (bad || sbb_count != 2) ? 1 : 0;
+}
+seen_sbb && !seen_consumer &&
+(/\bshr[lq]\b/ || /\band[lq]\b/ || /\bxor[lq]\b/ ||
+ /\bnot[lq]\b/ || /\bset[bcae]\b/ || /add[ql][[:space:]]+\$-1,/ ||
+ /\bbtl\b/ || /\bcmc\b/) {
+    bad = 1;
+}
+END {
+    if (!seen_sbb || !seen_consumer || bad || sbb_count != 2) {
+        exit 1;
+    }
+}
+' "$sbcs_sbcs_block" || die "materialized SBCS->SBCS still has borrow decode glue between producer sbb and consumer sbb"
+
+grep -Eq '\bsbbl\b' "$sbcs_sbcs32_block" \
+    || die "missing host sbbl for materialized SBCS32->SBCS32 path"
+awk '
+/sbbl/ && !seen_sbb {
+    seen_sbb = 1;
+    sbb_count = 1;
+    next;
+}
+seen_sbb && !seen_consumer && /sbbl/ {
+    sbb_count++;
+    seen_consumer = 1;
+    exit (bad || sbb_count != 2) ? 1 : 0;
+}
+seen_sbb && !seen_consumer &&
+(/\bshrl\b/ || /\bandl\b/ || /\bxorl\b/ ||
+ /\bnotl\b/ || /\bset[bcae]\b/ || /addl[[:space:]]+\$-1,/ ||
+ /\bbtl\b/ || /\bcmc\b/) {
+    bad = 1;
+}
+END {
+    if (!seen_sbb || !seen_consumer || bad || sbb_count != 2) {
+        exit 1;
+    }
+}
+' "$sbcs_sbcs32_block" || die "materialized SBCS32->SBCS32 still has borrow decode glue between producer sbb and consumer sbb"
+
 awk '
 /adcl/ {
     seen_producer = 1;
@@ -2966,5 +3385,6 @@ END {
 echo "All codegen guard checks passed:"
 echo "  - Materialized ADDS/ADDS32->ADCS and SUBS/SUBS32->SBCS use direct path (add/adc, sub/sbb without decode glue)"
 echo "  - Materialized ADCS/ADCS32->ADC and SBCS/SBCS32->SBC use direct phase A1 shape (adc/adc, sbb/sbb without decode glue)"
+echo "  - Materialized ADCS/ADCS32->ADCS and SBCS/SBCS32->SBCS use direct phase A2 shape (adc/adc, sbb/sbb without decode glue)"
 echo "  - Mixed-width ADCS32->ADC64 stays outside the supported same-width compact direct shape"
 echo "  - Truly adjacent compare-like CMN->ADCS and CMP->SBCS use fallback carry/borrow seeding before the consumer adc/sbb"
