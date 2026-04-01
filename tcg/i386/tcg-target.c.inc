@@ -1816,6 +1816,53 @@ outop_x86_cmp_jcc_capture_rawflags = {
     .out_ri = tgen_x86_cmp_jcci_capture_rawflags,
 };
 
+static void tcg_out_add_capture_cond_jcc(TCGContext *s, int rexw, TCGCond cond,
+                                         TCGReg dst, TCGArg rhs,
+                                         int const_rhs,
+                                         tcg_target_long raw_off,
+                                         TCGLabel *label, bool small)
+{
+    if (!const_rhs) {
+        tgen_arithr(s, ARITH_ADD + rexw, dst, rhs);
+    } else {
+        tcg_debug_assert(!rexw || rhs == (int32_t)rhs);
+        tgen_arithi(s, ARITH_ADD + rexw, dst, rhs, 1);
+    }
+    tcg_out_x86_capture_rawflags_to_env(s, raw_off, true);
+    tcg_out_jxx(s, tcg_cond_to_jcc[cond], label, small);
+}
+
+static void tgen_x86_add_brcond_capture_rawflags(TCGContext *s, TCGType type,
+                                                 TCGCond cond, TCGReg dst,
+                                                 TCGReg rhs,
+                                                 tcg_target_long raw_off,
+                                                 TCGLabel *label)
+{
+    int rexw = type == TCG_TYPE_I32 ? 0 : P_REXW;
+
+    tcg_out_add_capture_cond_jcc(s, rexw, cond, dst, rhs,
+                                 false, raw_off, label, false);
+}
+
+static void tgen_x86_add_brcondi_capture_rawflags(TCGContext *s, TCGType type,
+                                                  TCGCond cond, TCGReg dst,
+                                                  tcg_target_long rhs,
+                                                  tcg_target_long raw_off,
+                                                  TCGLabel *label)
+{
+    int rexw = type == TCG_TYPE_I32 ? 0 : P_REXW;
+
+    tcg_out_add_capture_cond_jcc(s, rexw, cond, dst, rhs,
+                                 true, raw_off, label, false);
+}
+
+static const TCGOutOpX86CmpBrcondCaptureRaw
+outop_x86_add_brcond_capture_rawflags = {
+    .base.static_constraint = C_O0_I2(r, reT),
+    .out_rr = tgen_x86_add_brcond_capture_rawflags,
+    .out_ri = tgen_x86_add_brcondi_capture_rawflags,
+};
+
 static void tgen_x86_and_capture_rawflags(TCGContext *s, TCGType type,
                                           TCGReg rawflags, TCGReg dst,
                                           TCGReg rhs)
@@ -4548,6 +4595,8 @@ tcg_target_op_def(TCGOpcode op, TCGType type, unsigned flags)
 
     case INDEX_op_x86_cmp_brcond_capture_rawflags:
     case INDEX_op_x86_cmp_jcc_capture_rawflags:
+        return C_O0_I2(r, reT);
+    case INDEX_op_x86_add_brcond_capture_rawflags:
         return C_O0_I2(r, reT);
 
     case INDEX_op_x86_and_capture_rawflags:

@@ -887,7 +887,8 @@ static bool a64_insn_is_cmp_gap_safe(uint32_t insn)
     return false;
 }
 
-static bool a64_find_future_bcond_gap(DisasContext *s, uint8_t *gap_insns)
+static bool a64_find_future_bcond_gap(DisasContext *s, uint8_t *gap_insns,
+                                      int *match_cc)
 {
     target_ulong pc = s->base.pc_next;
     int remaining = s->base.max_insns - s->base.num_insns;
@@ -906,6 +907,9 @@ static bool a64_find_future_bcond_gap(DisasContext *s, uint8_t *gap_insns)
         insn = arm_ldl_code(s->env, &s->base, pc, s->sctlr_b);
         if (a64_insn_is_plain_bcond(insn, &cc)) {
             *gap_insns = gap;
+            if (match_cc) {
+                *match_cc = cc;
+            }
             return true;
         }
         if (!a64_insn_is_cmp_gap_safe(insn)) {
@@ -1054,10 +1058,12 @@ static bool a64_find_adjacent_plain_adc_same_width(DisasContext *s, bool sf)
         a64_insn_is_plain_adcs_reg(insn);
 }
 #else
-static bool a64_find_future_bcond_gap(DisasContext *s, uint8_t *gap_insns)
+static bool a64_find_future_bcond_gap(DisasContext *s, uint8_t *gap_insns,
+                                      int *match_cc)
 {
     (void)s;
     (void)gap_insns;
+    (void)match_cc;
     return false;
 }
 
@@ -1989,6 +1995,60 @@ static void a64_emit_x86_cmp_jcc_i32(int jcc, TCGv_i32 lhs,
     a64_add_label_use(label, op);
 }
 
+static void a64_emit_x86_add_brcond_capture_rawflags_i64(TCGCond cond,
+                                                         TCGv_i64 lhs,
+                                                         TCGv_i64 rhs,
+                                                         TCGLabel *label)
+{
+    TCGv_i64 dst = tcg_temp_new_i64();
+    TCGOp *op;
+
+    if (cond == TCG_COND_ALWAYS) {
+        tcg_gen_br(label);
+        return;
+    }
+    if (cond == TCG_COND_NEVER) {
+        return;
+    }
+
+    tcg_gen_mov_i64(dst, lhs);
+    op = tcg_emit_op(INDEX_op_x86_add_brcond_capture_rawflags, 5);
+    TCGOP_TYPE(op) = TCG_TYPE_I64;
+    tcg_set_insn_param(op, 0, tcgv_i64_arg(dst));
+    tcg_set_insn_param(op, 1, tcgv_i64_arg(rhs));
+    tcg_set_insn_param(op, 2, cond);
+    tcg_set_insn_param(op, 3, label_arg(label));
+    tcg_set_insn_param(op, 4, offsetof(CPUARMState, x86_raw_flags));
+    a64_add_label_use(label, op);
+}
+
+static void a64_emit_x86_add_brcond_capture_rawflags_i32(TCGCond cond,
+                                                         TCGv_i32 lhs,
+                                                         TCGv_i32 rhs,
+                                                         TCGLabel *label)
+{
+    TCGv_i32 dst = tcg_temp_new_i32();
+    TCGOp *op;
+
+    if (cond == TCG_COND_ALWAYS) {
+        tcg_gen_br(label);
+        return;
+    }
+    if (cond == TCG_COND_NEVER) {
+        return;
+    }
+
+    tcg_gen_mov_i32(dst, lhs);
+    op = tcg_emit_op(INDEX_op_x86_add_brcond_capture_rawflags, 5);
+    TCGOP_TYPE(op) = TCG_TYPE_I32;
+    tcg_set_insn_param(op, 0, tcgv_i32_arg(dst));
+    tcg_set_insn_param(op, 1, tcgv_i32_arg(rhs));
+    tcg_set_insn_param(op, 2, cond);
+    tcg_set_insn_param(op, 3, label_arg(label));
+    tcg_set_insn_param(op, 4, offsetof(CPUARMState, x86_raw_flags));
+    a64_add_label_use(label, op);
+}
+
 static void a64_emit_x86_cmp_sbb_capture_cmp_rawflags_i64(TCGv_i64 dst,
                                                           TCGv_i64 src,
                                                           TCGv_i64 cmp_lhs,
@@ -2063,6 +2123,8 @@ static bool a64_try_emit_x86_cmp_bcond(DisasContext *s, int cc,
     bool capture_raw;
     bool use_tcg_cond = a64_cmp_cond_to_tcg(&cond, cc);
     bool use_x86_jcc = a64_cmp_cond_to_x86_jcc(&jcc, cc);
+    bool add_like = s->a64_pending_cc.cc_op == A64_X86_CC_ADD64 ||
+                    s->a64_pending_cc.cc_op == A64_X86_CC_ADD32;
 
     if (!s->a64_pending_cc.valid ||
         (s->a64_pending_cc.rewind != NULL &&
@@ -2075,10 +2137,13 @@ static bool a64_try_emit_x86_cmp_bcond(DisasContext *s, int cc,
         a64_try_rewind_adjacent_cmp(s, use_tcg_cond ? "B.cond-x86-tcg"
                                                     : "B.cond-x86-jcc");
     }
+    if (add_like && !use_tcg_cond) {
+        return false;
+    }
     reset_btype(s);
     a64_cmp_note_consume(s, use_tcg_cond ? "B.cond-x86-tcg"
                                          : "B.cond-x86-jcc");
-    capture_raw = !a64_cmp_can_skip_raw_capture(s, imm);
+    capture_raw = add_like || !a64_cmp_can_skip_raw_capture(s, imm);
     if (capture_raw) {
         tcg_gen_movi_i32(cpu_x86_cc_op, s->a64_pending_cc.cc_op);
         if (s->a64_flags_rep != A64_FLAGS_REP_RAW) {
@@ -2092,7 +2157,20 @@ static bool a64_try_emit_x86_cmp_bcond(DisasContext *s, int cc,
         a64_note_flags_split(s);
     }
 
-    if (s->a64_pending_cc.sf) {
+    if (add_like && s->a64_pending_cc.sf) {
+        a64_emit_x86_add_brcond_capture_rawflags_i64(cond,
+                                                     s->a64_pending_cc.lhs,
+                                                     s->a64_pending_cc.rhs,
+                                                     match.label);
+    } else if (add_like) {
+        TCGv_i32 lhs = tcg_temp_new_i32();
+        TCGv_i32 rhs = tcg_temp_new_i32();
+
+        tcg_gen_extrl_i64_i32(lhs, s->a64_pending_cc.lhs);
+        tcg_gen_extrl_i64_i32(rhs, s->a64_pending_cc.rhs);
+        a64_emit_x86_add_brcond_capture_rawflags_i32(cond, lhs, rhs,
+                                                     match.label);
+    } else if (s->a64_pending_cc.sf) {
         if (use_tcg_cond) {
             a64_emit_x86_cmp_brcond_i64(cond, s->a64_pending_cc.lhs,
                                         s->a64_pending_cc.rhs, match.label,
@@ -7430,6 +7508,8 @@ static bool do_addsub_imm(DisasContext *s, arg_rri_sf *a,
     bool materialized_sbc_sub = false;
     bool materialized_adc_add = false;
     uint8_t gap_insns = 0;
+    int future_bcond_cc = -1;
+    TCGCond future_bcond_cond;
     TCGv_i64 tcg_rn = read_cpu_reg_sp(s, a->rn, a->sf);
     TCGv_i64 tcg_imm = tcg_constant_i64(a->imm);
     TCGv_i64 tcg_pending_imm = tcg_imm;
@@ -7437,30 +7517,26 @@ static bool do_addsub_imm(DisasContext *s, arg_rri_sf *a,
     TCGv_i64 tcg_result;
 
     if (setflags && sub_op && a->rd == 31) {
-        lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns);
+        lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns, NULL);
         if (!lazy_bcond_cmp) {
             lazy_sbc_cmp = a64_find_adjacent_plain_sbc_cmp(s);
+        }
+    } else if (setflags && !sub_op && a->rd == 31) {
+        lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns,
+                                                   &future_bcond_cc);
+        if (lazy_bcond_cmp &&
+            !a64_cmp_cond_to_tcg(&future_bcond_cond, future_bcond_cc)) {
+            lazy_bcond_cmp = false;
+        }
+        if (!lazy_bcond_cmp && a->sf) {
+            lazy_adc_add = a64_find_adjacent_plain_adc(s, false);
         }
     } else if (setflags && sub_op) {
         /* Materialized SUBS rd - can look for both SBC and SBCS */
         materialized_sbc_sub = a64_find_adjacent_plain_sbc_sub(s, true);
     } else if (setflags && !sub_op) {
-        if (a->rd == 31) {
-            /*
-             * The current compare-like immediate ADC direct path is a win for
-             * 64-bit, but the 32-bit CMN/ADDS(xzr,#imm)->ADC shape still pays
-             * more for raw-flags glue than it saves in carry decode.
-             *
-             * Compare-like producer (CMN) only looks for plain ADC.
-             * ADCS direct-consumer support is reserved for materialized ADDS rd.
-             */
-            if (a->sf) {
-                lazy_adc_add = a64_find_adjacent_plain_adc(s, false);
-            }
-        } else {
-            /* Materialized ADDS rd - can look for both ADC and ADCS */
-            materialized_adc_add = a64_find_adjacent_plain_adc(s, true);
-        }
+        /* Materialized ADDS rd - can look for both ADC and ADCS */
+        materialized_adc_add = a64_find_adjacent_plain_adc(s, true);
     }
 
     if (!setflags) {
@@ -7482,7 +7558,7 @@ static bool do_addsub_imm(DisasContext *s, arg_rri_sf *a,
                 gen_sub_CC(s, a->sf, tcg_result, tcg_rn, tcg_imm, true);
             }
         } else {
-            if (!lazy_adc_add) {
+            if (!lazy_bcond_cmp && !lazy_adc_add) {
                 gen_add_CC(s, a->sf, tcg_result, tcg_rn, tcg_imm,
                            a->rd != 31);
             }
@@ -11492,6 +11568,8 @@ static bool do_addsub_ext(DisasContext *s, arg_addsub_ext *a,
     bool materialized_sbc_sub = false;
     bool materialized_adc_add = false;
     uint8_t gap_insns = 0;
+    int future_bcond_cc = -1;
+    TCGCond future_bcond_cond;
     TCGv_i64 tcg_rm, tcg_rn, tcg_rd = NULL, tcg_result;
 
     if (a->sa > 4) {
@@ -11499,21 +11577,26 @@ static bool do_addsub_ext(DisasContext *s, arg_addsub_ext *a,
     }
 
     if (setflags && sub_op && a->rd == 31) {
-        lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns);
+        lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns, NULL);
         if (!lazy_bcond_cmp) {
             lazy_sbc_cmp = a64_find_adjacent_plain_sbc_cmp(s);
+        }
+    } else if (setflags && !sub_op && a->rd == 31) {
+        lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns,
+                                                   &future_bcond_cc);
+        if (lazy_bcond_cmp &&
+            !a64_cmp_cond_to_tcg(&future_bcond_cond, future_bcond_cc)) {
+            lazy_bcond_cmp = false;
+        }
+        if (!lazy_bcond_cmp) {
+            lazy_adc_add = a64_find_adjacent_plain_adc(s, false);
         }
     } else if (setflags && sub_op) {
         /* Materialized SUBS rd - can look for both SBC and SBCS */
         materialized_sbc_sub = a64_find_adjacent_plain_sbc_sub(s, true);
     } else if (setflags && !sub_op) {
-        if (a->rd == 31) {
-            /* Compare-like producer (CMN) only looks for plain ADC. */
-            lazy_adc_add = a64_find_adjacent_plain_adc(s, false);
-        } else {
-            /* Materialized ADDS rd - can look for both ADC and ADCS */
-            materialized_adc_add = a64_find_adjacent_plain_adc(s, true);
-        }
+        /* Materialized ADDS rd - can look for both ADC and ADCS */
+        materialized_adc_add = a64_find_adjacent_plain_adc(s, true);
     }
 
     /* non-flag setting ops may use SP */
@@ -11540,7 +11623,7 @@ static bool do_addsub_ext(DisasContext *s, arg_addsub_ext *a,
                 gen_sub_CC(s, a->sf, tcg_result, tcg_rn, tcg_rm, true);
             }
         } else {
-            if (!lazy_adc_add) {
+            if (!lazy_bcond_cmp && !lazy_adc_add) {
                 gen_add_CC(s, a->sf, tcg_result, tcg_rn, tcg_rm,
                            a->rd != 31);
             }
@@ -11592,6 +11675,8 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
     bool materialized_sbc_sub = false;
     bool materialized_adc_add = false;
     uint8_t gap_insns = 0;
+    int future_bcond_cc = -1;
+    TCGCond future_bcond_cond;
     TCGv_i64 tcg_rd = NULL, tcg_rn, tcg_rm, tcg_result;
 
     if (a->st == 3 || (!a->sf && (a->sa & 32))) {
@@ -11599,21 +11684,26 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
     }
 
     if (setflags && sub_op && a->rd == 31) {
-        lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns);
+        lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns, NULL);
         if (!lazy_bcond_cmp) {
             lazy_sbc_cmp = a64_find_adjacent_plain_sbc_cmp(s);
+        }
+    } else if (setflags && !sub_op && a->rd == 31) {
+        lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns,
+                                                   &future_bcond_cc);
+        if (lazy_bcond_cmp &&
+            !a64_cmp_cond_to_tcg(&future_bcond_cond, future_bcond_cc)) {
+            lazy_bcond_cmp = false;
+        }
+        if (!lazy_bcond_cmp) {
+            lazy_adc_add = a64_find_adjacent_plain_adc(s, false);
         }
     } else if (setflags && sub_op) {
         /* Materialized SUBS rd - can look for both SBC and SBCS */
         materialized_sbc_sub = a64_find_adjacent_plain_sbc_sub(s, true);
     } else if (setflags && !sub_op) {
-        if (a->rd == 31) {
-            /* Compare-like producer (CMN) only looks for plain ADC. */
-            lazy_adc_add = a64_find_adjacent_plain_adc(s, false);
-        } else {
-            /* Materialized ADDS rd - can look for both ADC and ADCS */
-            materialized_adc_add = a64_find_adjacent_plain_adc(s, true);
-        }
+        /* Materialized ADDS rd - can look for both ADC and ADCS */
+        materialized_adc_add = a64_find_adjacent_plain_adc(s, true);
     }
 
     if (!setflags || (!lazy_bcond_cmp && !lazy_sbc_cmp && !lazy_adc_add)) {
@@ -11637,7 +11727,7 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
                 gen_sub_CC(s, a->sf, tcg_result, tcg_rn, tcg_rm, true);
             }
         } else {
-            if (!lazy_adc_add) {
+            if (!lazy_bcond_cmp && !lazy_adc_add) {
                 gen_add_CC(s, a->sf, tcg_result, tcg_rn, tcg_rm,
                            a->rd != 31);
             }
@@ -11753,7 +11843,7 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
     uint8_t gap_insns = 0;
 
     if (setflags && is_sub && a->rd == 31) {
-        lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns);
+        lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns, NULL);
     }
     if (setflags && a->rd != 31) {
         if (is_sub) {
