@@ -1337,6 +1337,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -1348,6 +1351,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -1356,6 +1362,9 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
     next;
 }
 /^OUT:/ {
@@ -1391,6 +1400,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -1402,6 +1414,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -1410,6 +1425,9 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
     next;
 }
 /^OUT:/ {
@@ -1445,6 +1463,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -1456,6 +1477,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -1464,6 +1488,9 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
     next;
 }
 /^OUT:/ {
@@ -1499,6 +1526,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -1510,6 +1540,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -1518,6 +1551,9 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
     next;
 }
 /^OUT:/ {
@@ -1553,6 +1589,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -1564,6 +1603,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -1572,6 +1614,9 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
     next;
 }
 /^OUT:/ {
@@ -1607,6 +1652,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -1618,6 +1666,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -1626,6 +1677,9 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
     next;
 }
 /^OUT:/ {
@@ -2017,6 +2071,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -2028,6 +2085,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -2036,6 +2096,9 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    adds = 0;
+    adcs = 0;
     next;
 }
 /^OUT:/ {
@@ -2077,6 +2140,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -2088,6 +2154,9 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -2096,6 +2165,9 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    subs = 0;
+    sbcs = 0;
     next;
 }
 /^OUT:/ {
@@ -2830,7 +2902,9 @@ awk '
 in_between {
     if ($0 ~ /\bshr[lq]\b/ || $0 ~ /\band[lq]\b/ || $0 ~ /\bxor[lq]\b/ ||
         $0 ~ /\bnot[lq]\b/ || $0 ~ /\bset[bcae]\b/ ||
-        $0 ~ /add[ql][[:space:]]+\$-1,/) {
+        $0 ~ /add[ql][[:space:]]+\$-1,/ ||
+        $0 ~ /\bsbbl\b/ || $0 ~ /\bnegl\b/ ||
+        $0 ~ /\bbtl\b/ || $0 ~ /\bcmc\b/) {
         saw_glue = 1;
     }
     if ($0 ~ /adcq/) {
