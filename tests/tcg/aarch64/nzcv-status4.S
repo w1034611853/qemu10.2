@@ -1823,6 +1823,54 @@ t_aa_after:
     expect_nzcv 0x8, 0xae
     expect_reg_imm w7, 30, 0xae
 
+    /* 0xaf: ADDS64 -> ADCS64 -> MRS NZCV (direct consumer with pinned NZCV) */
+    /* Producer: adds -1 + 1 = 0, sets Z=1, C=1 -> NZCV = 0x6 */
+    mov     x6, #9
+    mov     x7, #3
+    movn    x0, #0            /* -1 */
+    mov     x1, #1
+    adds    x5, x0, x1        /* Producer: NZCV = 0x6 (Z=1, C=1) */
+    /* Consumer: adcs 9 + 3 + 1(C) = 13, NZCV = 0x0 (no flags set) */
+    adcs    x8, x6, x7        /* Consumer: 9+3+1=13, NZCV = 0x0 */
+    expect_nzcv 0x0, 0xaf
+    expect_reg_imm x8, 13, 0xaf
+
+    /* 0xb0: SUBS64 -> SBCS64 -> MRS NZCV (direct consumer with pinned NZCV) */
+    /* Producer: subs 0 - 1 = -1, sets N=1, C=0(borrow) -> NZCV = 0x8 */
+    mov     x6, #9
+    mov     x7, #3
+    mov     x0, #0
+    mov     x1, #1
+    subs    x5, x0, x1        /* Producer: NZCV = 0x8 (N=1, C=0) */
+    /* Consumer: sbcs 9 - 3 - NOT(0) = 9-3-1 = 5, NZCV = 0x2 (C=1) */
+    sbcs    x8, x6, x7        /* Consumer: 9-3-1=5, NZCV = 0x2 (C=1) */
+    expect_nzcv 0x2, 0xb0
+    expect_reg_imm x8, 5, 0xb0
+
+    /* 0xb1: ADDS32 -> ADCS32 -> MRS NZCV (direct consumer with pinned NZCV) */
+    /* Producer: adds 0xffffffff + 1 = 0, sets Z=1, C=1 -> NZCV = 0x6 */
+    mov     w6, #9
+    mov     w7, #3
+    movn    w0, #0            /* 0xffffffff */
+    mov     w1, #1
+    adds    w5, w0, w1        /* Producer: NZCV = 0x6 (Z=1, C=1) */
+    /* Consumer: adcs 9 + 3 + 1(C) = 13, NZCV = 0x0 (no flags set) */
+    adcs    w8, w6, w7        /* Consumer: 9+3+1=13, NZCV = 0x0 */
+    expect_nzcv 0x0, 0xb1
+    expect_reg_imm x8, 13, 0xb1
+
+    /* 0xb2: SUBS32 -> SBCS32 -> MRS NZCV (direct consumer with pinned NZCV) */
+    /* Producer: subs 0 - 1 = 0xffffffff, sets N=1, C=0(borrow) -> NZCV = 0x8 */
+    mov     w6, #9
+    mov     w7, #3
+    mov     w0, #0
+    mov     w1, #1
+    subs    w5, w0, w1        /* Producer: NZCV = 0x8 (N=1, C=0) */
+    /* Consumer: sbcs 9 - 3 - NOT(0) = 9-3-1 = 5, NZCV = 0x2 (C=1) */
+    sbcs    w8, w6, w7        /* Consumer: 9-3-1=5, NZCV = 0x2 (C=1) */
+    expect_nzcv 0x2, 0xb2
+    expect_reg_imm w8, 5, 0xb2
+
     b       after_shared_consumers
 
 shared_nzcv_consumer:

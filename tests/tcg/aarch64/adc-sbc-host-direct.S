@@ -199,13 +199,21 @@ _start:
     bl      block_cmn_carry_adcs64
     bl      block_cmn_ext_adcs64
     bl      block_adds_adcs64
+    bl      block_adds_adcs32
+    bl      block_adds_imm_adcs64      // ADDS imm -> ADCS (adjacent)
+    bl      block_adds_ext_adcs64      // ADDS ext -> ADCS (adjacent)
     bl      block_cmp_sbcs64
     bl      block_cmp_sbcs32
     bl      block_cmp_borrow_sbcs64
     bl      block_cmp_reg2_sbcs64
     bl      block_cmp_ext_sbcs64
     bl      block_subs_sbcs64
+    bl      block_subs_sbcs32
+    bl      block_subs_imm_sbcs64      // SUBS imm -> SBCS (adjacent)
+    bl      block_subs_ext_sbcs64      // SUBS ext -> SBCS (adjacent)
     bl      block_sbcs_xzr_priority
+    bl      block_cmn_adcs64_adjacent   // CMN->ADCS truly adjacent (narrowed)
+    bl      block_cmp_sbcs64_adjacent   // CMP->SBCS truly adjacent (narrowed)
 
     mov     x0, #0
     mov     x8, #93
@@ -270,13 +278,51 @@ block_cmn_ext_adcs64:
     b.ne    fail
     ret
 
-// ADCS: adds(rd) producer -> adcs consumer
+// ADCS: adds(rd) producer -> adcs consumer (reg form, truly adjacent)
 block_adds_adcs64:
-    movn    x0, #0
-    mov     x1, #1
-    adds    x5, x0, x1        // 0+1=1, C=1 (signed overflow)
     mov     x6, #9
     mov     x7, #3
+    movn    x0, #0
+    mov     x1, #1
+    adds    x5, x0, x1        // -1+1=0, C=1 (unsigned overflow)
+    adcs    x8, x6, x7        // 9+3+1=13
+    b.cs    fail              // final C=0
+    cmp     x8, #13
+    b.ne    fail
+    ret
+
+// ADCS: adds(rd) producer -> adcs consumer (32-bit reg form, truly adjacent)
+block_adds_adcs32:
+    mov     w6, #9
+    mov     w7, #3
+    movn    w0, #0
+    mov     w1, #1
+    adds    w5, w0, w1        // 0xffffffff+1=0, C=1 (unsigned overflow)
+    adcs    w8, w6, w7        // 9+3+1=13
+    b.cs    fail              // final C=0
+    cmp     w8, #13
+    b.ne    fail
+    ret
+
+// ADCS: adds imm producer -> adcs consumer (imm form, truly adjacent)
+block_adds_imm_adcs64:
+    mov     x6, #9
+    mov     x7, #3
+    movn    x0, #0
+    adds    x5, x0, #1        // -1+1=0, C=1 (unsigned overflow)
+    adcs    x8, x6, x7        // 9+3+1=13
+    b.cs    fail              // final C=0
+    cmp     x8, #13
+    b.ne    fail
+    ret
+
+// ADCS: adds ext producer -> adcs consumer (ext form, truly adjacent)
+block_adds_ext_adcs64:
+    mov     x6, #9
+    mov     x7, #3
+    mov     w1, #1
+    movn    x0, #0
+    adds    x5, x0, w1, uxtw  // -1+1=0, C=1 (unsigned overflow)
     adcs    x8, x6, x7        // 9+3+1=13
     b.cs    fail              // final C=0
     cmp     x8, #13
@@ -347,13 +393,51 @@ block_cmp_ext_sbcs64:
     b.ne    fail
     ret
 
-// SBCS: subs(rd) producer -> sbcs consumer
+// SBCS: subs(rd) producer -> sbcs consumer (reg form, truly adjacent)
 block_subs_sbcs64:
+    mov     x6, #9
+    mov     x7, #3
     mov     x0, #5
     mov     x1, #3
     subs    x5, x0, x1        // 5-3=2, C=1 (no borrow)
+    sbcs    x8, x6, x7        // 9-3-0=6
+    b.cc    fail              // final C=1, so b.cc should NOT branch
+    cmp     x8, #6
+    b.ne    fail
+    ret
+
+// SBCS: subs(rd) producer -> sbcs consumer (32-bit reg form, truly adjacent)
+block_subs_sbcs32:
+    mov     w6, #9
+    mov     w7, #3
+    mov     w0, #5
+    mov     w1, #3
+    subs    w5, w0, w1        // 5-3=2, C=1 (no borrow)
+    sbcs    w8, w6, w7        // 9-3-0=6
+    b.cc    fail              // final C=1, so b.cc should NOT branch
+    cmp     w8, #6
+    b.ne    fail
+    ret
+
+// SBCS: subs imm producer -> sbcs consumer (imm form, truly adjacent)
+block_subs_imm_sbcs64:
     mov     x6, #9
     mov     x7, #3
+    mov     x0, #5
+    subs    x5, x0, #3        // 5-3=2, C=1 (no borrow)
+    sbcs    x8, x6, x7        // 9-3-0=6
+    b.cc    fail              // final C=1, so b.cc should NOT branch
+    cmp     x8, #6
+    b.ne    fail
+    ret
+
+// SBCS: subs ext producer -> sbcs consumer (ext form, truly adjacent)
+block_subs_ext_sbcs64:
+    mov     x6, #9
+    mov     x7, #3
+    mov     w1, #3
+    mov     x0, #5
+    subs    x5, x0, w1, uxtw  // 5-3=2, C=1 (no borrow)
     sbcs    x8, x6, x7        // 9-3-0=6
     b.cc    fail              // final C=1, so b.cc should NOT branch
     cmp     x8, #6
@@ -377,7 +461,60 @@ block_sbcs_xzr_priority:
     b.ne    fail
     ret
 
+// ------------------------------------------------------------
+// Truly adjacent compare-like CMN/CMP -> ADCS/SBCS tests
+// These verify the new adjacent lookahead is narrowed for compare-like
+// ------------------------------------------------------------
+
+// Truly adjacent CMN -> ADCS (64-bit): negative test for narrowing
+// cmn and adcs are truly adjacent (no mov in between)
+// This should NOT take the direct path (narrowed)
+block_cmn_adcs64_adjacent:
+    // Prepare registers for adcs BEFORE cmn
+    mov     x5, #9
+    mov     x6, #3
+    // Load opaque inputs before the adjacent producer/consumer pair.
+    adr     x12, block_cmn_adcs64_adjacent_inputs
+    ldr     x0, [x12]
+    ldr     x1, [x12, #8]
+    // Producer and consumer are truly adjacent
+    cmn     x0, x1            // producer: -1 + 1 = 0, C=1 (unsigned overflow)
+    adcs    x7, x5, x6        // consumer: 9+3+1=13, truly adjacent to cmn
+    b.cs    fail              // verify flags (final C=0)
+    cmp     x7, #13
+    b.ne    fail
+    ret
+
+// Truly adjacent CMP -> SBCS (64-bit): negative test for narrowing
+// cmp and sbcs are truly adjacent (no mov in between)
+// This should NOT take the direct path (narrowed)
+block_cmp_sbcs64_adjacent:
+    // Prepare registers for sbcs BEFORE cmp
+    mov     x5, #9
+    mov     x6, #3
+    // Load opaque inputs before the adjacent producer/consumer pair.
+    adr     x12, block_cmp_sbcs64_adjacent_inputs
+    ldr     x0, [x12]
+    ldr     x1, [x12, #8]
+    // Producer and consumer are truly adjacent
+    cmp     x0, x1            // producer: 5-3=2, C=1 (no borrow)
+    sbcs    x7, x5, x6        // consumer: 9-3-0=6, truly adjacent to cmp
+    b.cc    fail              // verify flags (final C=1)
+    cmp     x7, #6
+    b.ne    fail
+    ret
+
 fail:
     mov     x0, #1
     mov     x8, #93
     svc     #0
+
+    .balign 8
+block_cmn_adcs64_adjacent_inputs:
+    .xword 0xffffffffffffffff
+    .xword 1
+
+    .balign 8
+block_cmp_sbcs64_adjacent_inputs:
+    .xword 5
+    .xword 3

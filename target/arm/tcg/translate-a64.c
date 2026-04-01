@@ -925,15 +925,19 @@ static bool a64_find_adjacent_plain_sbc_cmp(DisasContext *s)
         return false;
     }
 
+    /*
+     * Compare-like SUBS-to-XZR producer (CMP) only looks for plain SBC.
+     * The setflags SBCS direct helper is reserved for materialized SUBS rd.
+     */
     return a64_insn_is_plain_sbc_reg(arm_ldl_code(s->env, &s->base, pc,
-                                                  s->sctlr_b)) ||
-           a64_insn_is_plain_sbcs_reg(arm_ldl_code(s->env, &s->base, pc,
-                                                    s->sctlr_b));
+                                                  s->sctlr_b));
 }
 
-static bool a64_find_adjacent_plain_sbc_sub(DisasContext *s)
+static bool a64_find_adjacent_plain_sbc_sub(DisasContext *s,
+                                               bool allow_setflags_consumer)
 {
     target_ulong pc = s->base.pc_next;
+    uint32_t insn;
 
     if (!a64_sub_sbc_direct_enabled()) {
         return false;
@@ -945,15 +949,26 @@ static bool a64_find_adjacent_plain_sbc_sub(DisasContext *s)
         return false;
     }
 
-    return a64_insn_is_plain_sbc_reg(arm_ldl_code(s->env, &s->base, pc,
-                                                  s->sctlr_b)) ||
-           a64_insn_is_plain_sbcs_reg(arm_ldl_code(s->env, &s->base, pc,
-                                                    s->sctlr_b));
+    insn = arm_ldl_code(s->env, &s->base, pc, s->sctlr_b);
+
+    /*
+     * Materialized producer (SUBS rd) can look for both plain SBC and SBCS.
+     * Compare-like producer should use a64_find_adjacent_plain_sbc_cmp instead.
+     */
+    if (a64_insn_is_plain_sbc_reg(insn)) {
+        return true;
+    }
+    if (allow_setflags_consumer && a64_insn_is_plain_sbcs_reg(insn)) {
+        return true;
+    }
+    return false;
 }
 
-static bool a64_find_adjacent_plain_adc(DisasContext *s)
+static bool a64_find_adjacent_plain_adc(DisasContext *s,
+                                           bool allow_setflags_consumer)
 {
     target_ulong pc = s->base.pc_next;
+    uint32_t insn;
 
     if (!a64_add_adc_direct_enabled()) {
         return false;
@@ -965,10 +980,19 @@ static bool a64_find_adjacent_plain_adc(DisasContext *s)
         return false;
     }
 
-    return a64_insn_is_plain_adc_reg(arm_ldl_code(s->env, &s->base, pc,
-                                                  s->sctlr_b)) ||
-           a64_insn_is_plain_adcs_reg(arm_ldl_code(s->env, &s->base, pc,
-                                                    s->sctlr_b));
+    insn = arm_ldl_code(s->env, &s->base, pc, s->sctlr_b);
+
+    /*
+     * Compare-like ADDS-to-XZR producer (CMN) only looks for plain ADC.
+     * Materialized producer (ADDS rd) can also look for ADCS.
+     */
+    if (a64_insn_is_plain_adc_reg(insn)) {
+        return true;
+    }
+    if (allow_setflags_consumer && a64_insn_is_plain_adcs_reg(insn)) {
+        return true;
+    }
+    return false;
 }
 #else
 static bool a64_find_future_bcond_gap(DisasContext *s, uint8_t *gap_insns)
@@ -984,15 +1008,19 @@ static bool a64_find_adjacent_plain_sbc_cmp(DisasContext *s)
     return false;
 }
 
-static bool a64_find_adjacent_plain_sbc_sub(DisasContext *s)
+static bool a64_find_adjacent_plain_sbc_sub(DisasContext *s,
+                                             bool allow_setflags_consumer)
 {
     (void)s;
+    (void)allow_setflags_consumer;
     return false;
 }
 
-static bool a64_find_adjacent_plain_adc(DisasContext *s)
+static bool a64_find_adjacent_plain_adc(DisasContext *s,
+                                         bool allow_setflags_consumer)
 {
     (void)s;
+    (void)allow_setflags_consumer;
     return false;
 }
 #endif
@@ -2190,7 +2218,7 @@ static bool a64_try_emit_x86_add_adc(DisasContext *s, bool sf,
  * 1. NO call to a64_get_current_carry_flag() - we use the pending producer's
  *    live CF directly
  * 2. Set final raw state to A64_X86_CC_ADC64/ADC32 (consumer's flags)
- * 3. Mark pending_cc as consumed (valid = false)
+ * 3. Clear the pending producer - no producer restoration is needed
  * 4. NO producer state restoration - consumer's raw flags become canonical
  */
 static bool __attribute__((unused)) a64_try_emit_x86_add_adcs(DisasContext *s, bool sf,
@@ -2219,23 +2247,30 @@ static bool __attribute__((unused)) a64_try_emit_x86_add_adcs(DisasContext *s, b
 
     /* Emit the adc instruction - carry is already live on the host */
     if (sf) {
+        TCGv_i32 raw = tcg_temp_new_i32();
+
         a64_emit_addci_i64(tcg_rd, tcg_rn, tcg_rm);
+        a64_emit_x86_capture_rawflags(raw);
+        tcg_gen_mov_i32(cpu_x86_raw_flags, raw);
     } else {
         TCGv_i32 result32 = tcg_temp_new_i32();
         TCGv_i32 rn32 = tcg_temp_new_i32();
         TCGv_i32 rm32 = tcg_temp_new_i32();
+        TCGv_i32 raw = tcg_temp_new_i32();
 
         tcg_gen_extrl_i64_i32(rn32, tcg_rn);
         tcg_gen_extrl_i64_i32(rm32, tcg_rm);
         a64_emit_addci_i32(result32, rn32, rm32);
+        a64_emit_x86_capture_rawflags(raw);
+        tcg_gen_mov_i32(cpu_x86_raw_flags, raw);
         tcg_gen_extu_i32_i64(tcg_rd, result32);
     }
 
     /* Set consumer's raw flags state (NOT producer's) */
     a64_set_raw_flags_state(s, sf ? A64_X86_CC_ADC64 : A64_X86_CC_ADC32);
 
-    /* Mark producer as consumed - no restoration needed */
-    s->a64_pending_cc.valid = false;
+    /* Clear the producer - no restoration needed after consumer flags win */
+    a64_clear_pending_cc_producer(s);
     return true;
 }
 #else
@@ -2257,7 +2292,7 @@ static bool a64_try_emit_x86_add_adcs(DisasContext *s, bool sf,
  * 1. NO call to a64_get_current_carry_flag() - we use the pending producer's
  *    live CF directly
  * 2. Set final raw state to A64_X86_CC_SBC64/SBC32 (consumer's flags)
- * 3. Mark pending_cc as consumed (valid = false)
+ * 3. Clear the pending producer - no producer restoration is needed
  * 4. NO producer state restoration - consumer's raw flags become canonical
  */
 #if defined(__i386__) || defined(__x86_64__)
@@ -2288,25 +2323,34 @@ static bool __attribute__((unused)) a64_try_emit_x86_cmp_sbcs(DisasContext *s, b
         return false;
     }
 
+    a64_cmp_note_consume(s, "SBCS-x86-cmp-sbcs");
+
     /* Emit the sbb instruction - carry/borrow is already live on the host */
     if (sf) {
+        TCGv_i32 raw = tcg_temp_new_i32();
+
         a64_emit_subbi_i64(tcg_rd, tcg_rn, tcg_rm);
+        a64_emit_x86_capture_rawflags(raw);
+        tcg_gen_mov_i32(cpu_x86_raw_flags, raw);
     } else {
         TCGv_i32 result32 = tcg_temp_new_i32();
         TCGv_i32 rn32 = tcg_temp_new_i32();
         TCGv_i32 rm32 = tcg_temp_new_i32();
+        TCGv_i32 raw = tcg_temp_new_i32();
 
         tcg_gen_extrl_i64_i32(rn32, tcg_rn);
         tcg_gen_extrl_i64_i32(rm32, tcg_rm);
         a64_emit_subbi_i32(result32, rn32, rm32);
+        a64_emit_x86_capture_rawflags(raw);
+        tcg_gen_mov_i32(cpu_x86_raw_flags, raw);
         tcg_gen_extu_i32_i64(tcg_rd, result32);
     }
 
     /* Set consumer's raw flags state (NOT producer's) */
     a64_set_raw_flags_state(s, sf ? A64_X86_CC_SBC64 : A64_X86_CC_SBC32);
 
-    /* Mark producer as consumed - no restoration needed */
-    s->a64_pending_cc.valid = false;
+    /* Clear the producer - no restoration needed after consumer flags win */
+    a64_clear_pending_cc_producer(s);
     return true;
 }
 #else
@@ -7277,19 +7321,24 @@ static bool do_addsub_imm(DisasContext *s, arg_rri_sf *a,
             lazy_sbc_cmp = a64_find_adjacent_plain_sbc_cmp(s);
         }
     } else if (setflags && sub_op) {
-        materialized_sbc_sub = a64_find_adjacent_plain_sbc_sub(s);
+        /* Materialized SUBS rd - can look for both SBC and SBCS */
+        materialized_sbc_sub = a64_find_adjacent_plain_sbc_sub(s, true);
     } else if (setflags && !sub_op) {
         if (a->rd == 31) {
             /*
              * The current compare-like immediate ADC direct path is a win for
              * 64-bit, but the 32-bit CMN/ADDS(xzr,#imm)->ADC shape still pays
              * more for raw-flags glue than it saves in carry decode.
+             *
+             * Compare-like producer (CMN) only looks for plain ADC.
+             * ADCS direct-consumer support is reserved for materialized ADDS rd.
              */
             if (a->sf) {
-                lazy_adc_add = a64_find_adjacent_plain_adc(s);
+                lazy_adc_add = a64_find_adjacent_plain_adc(s, false);
             }
         } else {
-            materialized_adc_add = a64_find_adjacent_plain_adc(s);
+            /* Materialized ADDS rd - can look for both ADC and ADCS */
+            materialized_adc_add = a64_find_adjacent_plain_adc(s, true);
         }
     }
 
@@ -11334,12 +11383,15 @@ static bool do_addsub_ext(DisasContext *s, arg_addsub_ext *a,
             lazy_sbc_cmp = a64_find_adjacent_plain_sbc_cmp(s);
         }
     } else if (setflags && sub_op) {
-        materialized_sbc_sub = a64_find_adjacent_plain_sbc_sub(s);
+        /* Materialized SUBS rd - can look for both SBC and SBCS */
+        materialized_sbc_sub = a64_find_adjacent_plain_sbc_sub(s, true);
     } else if (setflags && !sub_op) {
         if (a->rd == 31) {
-            lazy_adc_add = a64_find_adjacent_plain_adc(s);
+            /* Compare-like producer (CMN) only looks for plain ADC. */
+            lazy_adc_add = a64_find_adjacent_plain_adc(s, false);
         } else {
-            materialized_adc_add = a64_find_adjacent_plain_adc(s);
+            /* Materialized ADDS rd - can look for both ADC and ADCS */
+            materialized_adc_add = a64_find_adjacent_plain_adc(s, true);
         }
     }
 
@@ -11431,12 +11483,15 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
             lazy_sbc_cmp = a64_find_adjacent_plain_sbc_cmp(s);
         }
     } else if (setflags && sub_op) {
-        materialized_sbc_sub = a64_find_adjacent_plain_sbc_sub(s);
+        /* Materialized SUBS rd - can look for both SBC and SBCS */
+        materialized_sbc_sub = a64_find_adjacent_plain_sbc_sub(s, true);
     } else if (setflags && !sub_op) {
         if (a->rd == 31) {
-            lazy_adc_add = a64_find_adjacent_plain_adc(s);
+            /* Compare-like producer (CMN) only looks for plain ADC. */
+            lazy_adc_add = a64_find_adjacent_plain_adc(s, false);
         } else {
-            materialized_adc_add = a64_find_adjacent_plain_adc(s);
+            /* Materialized ADDS rd - can look for both ADC and ADCS */
+            materialized_adc_add = a64_find_adjacent_plain_adc(s, true);
         }
     }
 

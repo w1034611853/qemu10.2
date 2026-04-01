@@ -48,6 +48,10 @@ cmp_sbc_ext_block="${exe}.cmp_sbc_ext.block"
 cmp_sbc32_ext_block="${exe}.cmp_sbc32_ext.block"
 cmn_adcs_block="${exe}.cmn_adcs.block"
 cmp_sbcs_block="${exe}.cmp_sbcs.block"
+adds_adcs_block="${exe}.adds_adcs.block"
+adds_adcs32_block="${exe}.adds_adcs32.block"
+subs_sbcs_block="${exe}.subs_sbcs.block"
+subs_sbcs32_block="${exe}.subs_sbcs32.block"
 rm -f "$log"
 rm -f "$cmn_adc_block"
 rm -f "$cmn_adc32_block"
@@ -73,6 +77,10 @@ rm -f "$cmp_sbc_ext_block"
 rm -f "$cmp_sbc32_ext_block"
 rm -f "$cmn_adcs_block"
 rm -f "$cmp_sbcs_block"
+rm -f "$adds_adcs_block"
+rm -f "$adds_adcs32_block"
+rm -f "$subs_sbcs_block"
+rm -f "$subs_sbcs32_block"
 
 compare_like_ext_decode_re='\bshr[lq]\b|\band[lq]\b|\bxor[lq]\b|\bnot[lq]\b|\bset[bcae]\b'
 
@@ -1492,7 +1500,8 @@ END {
 }
 ' "$log" >"$subs_sbc32_ext_block" || die "failed to locate adjacent subs-ext->sbc32 host block"
 
-# ADCS block extractor: cmn x0, x1 / adcs x7, x5, x6
+# ADCS adjacent negative block extractor:
+# mov x5, #9 / mov x6, #3 / cmn x0, x1 / adcs x7, x5, x6
 awk '
 BEGIN {
     in_guest = 0;
@@ -1500,6 +1509,11 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    mov_x5 = 0;
+    mov_x6 = 0;
+    cmn = 0;
+    adcs = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -1511,6 +1525,11 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    mov_x5 = 0;
+    mov_x6 = 0;
+    cmn = 0;
+    adcs = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -1519,21 +1538,37 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    mov_x5 = 0;
+    mov_x6 = 0;
+    cmn = 0;
+    adcs = 0;
     next;
 }
 /^OUT:/ {
     in_guest = 0;
     in_host = 1;
     host = $0 "\n";
-    if (guest ~ /cmn[[:space:]]+x0, x1/ &&
-        guest ~ /adcs[[:space:]]+x7, x5, x6/) {
+    if (mov_x5 > 0 && mov_x6 == mov_x5 + 1 &&
+        cmn > mov_x6 &&
+        adcs == cmn + 1) {
         want = 1;
     }
     next;
 }
 {
     if (in_guest) {
+        guest_line++;
         guest = guest $0 "\n";
+        if ($0 ~ /x5, #0x9/) {
+            mov_x5 = guest_line;
+        } else if ($0 ~ /x6, #0x3/) {
+            mov_x6 = guest_line;
+        } else if ($0 ~ /cmn[[:space:]]+x0, x1/) {
+            cmn = guest_line;
+        } else if ($0 ~ /adcs[[:space:]]+x7, x5, x6/) {
+            adcs = guest_line;
+        }
     } else if (in_host) {
         host = host $0 "\n";
     }
@@ -1547,7 +1582,8 @@ END {
 }
 ' "$log" >"$cmn_adcs_block" || die "failed to locate adjacent cmn->adcs host block"
 
-# SBCS block extractor: cmp x0, x1 / sbcs x7, x5, x6
+# SBCS adjacent negative block extractor:
+# mov x5, #9 / mov x6, #3 / cmp x0, x1 / sbcs x7, x5, x6
 awk '
 BEGIN {
     in_guest = 0;
@@ -1555,6 +1591,11 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    mov_x5 = 0;
+    mov_x6 = 0;
+    cmp = 0;
+    sbcs = 0;
 }
 /^----------------$/ {
     if (want && host != "") {
@@ -1566,6 +1607,11 @@ BEGIN {
     want = 0;
     guest = "";
     host = "";
+    guest_line = 0;
+    mov_x5 = 0;
+    mov_x6 = 0;
+    cmp = 0;
+    sbcs = 0;
     next;
 }
 /^IN:[[:space:]]*$/ {
@@ -1574,21 +1620,37 @@ BEGIN {
     guest = "";
     host = "";
     want = 0;
+    guest_line = 0;
+    mov_x5 = 0;
+    mov_x6 = 0;
+    cmp = 0;
+    sbcs = 0;
     next;
 }
 /^OUT:/ {
     in_guest = 0;
     in_host = 1;
     host = $0 "\n";
-    if (guest ~ /cmp[[:space:]]+x0, x1/ &&
-        guest ~ /sbcs[[:space:]]+x7, x5, x6/) {
+    if (mov_x5 > 0 && mov_x6 == mov_x5 + 1 &&
+        cmp > mov_x6 &&
+        sbcs == cmp + 1) {
         want = 1;
     }
     next;
 }
 {
     if (in_guest) {
+        guest_line++;
         guest = guest $0 "\n";
+        if ($0 ~ /x5, #0x9/) {
+            mov_x5 = guest_line;
+        } else if ($0 ~ /x6, #0x3/) {
+            mov_x6 = guest_line;
+        } else if ($0 ~ /cmp[[:space:]]+x0, x1/) {
+            cmp = guest_line;
+        } else if ($0 ~ /sbcs[[:space:]]+x7, x5, x6/) {
+            sbcs = guest_line;
+        }
     } else if (in_host) {
         host = host $0 "\n";
     }
@@ -1785,8 +1847,400 @@ END {
 }
 ' "$subs_sbc32_ext_block" || die "adjacent SUBS-ext->SBC32 still decodes borrow before consumer sbb"
 
-# CMN->ADCS and CMP->SBCS do NOT use direct path because CMN/CMP are REWINDABLE_CMP.
-# CMN and CMP set up rewind for CF, so the direct adc/sbb path is not available.
-# The non-direct path is still correct - it just doesn't use raw adc/sbb directly.
-# Functional correctness is verified by running the test binary (which passes).
-# No codegen checks needed for these paths.
+# ========================================================================
+# Step 3: codegen guard 分成"支持路径硬检查"和"收窄路径负向检查"两类
+# ========================================================================
+
+# ------------------------------------------------------------------------
+# 3.1 对 materialized ADDS/SUBS -> ADCS/SBCS 做 direct 硬检查
+# ------------------------------------------------------------------------
+
+# ADDS reg -> ADCS: adds x5, x0, x1 / adcs x8, x6, x7 (真正相邻)
+awk '
+BEGIN {
+    in_guest = 0;
+    in_host = 0;
+    want = 0;
+    guest = "";
+    host = "";
+}
+/^----------------$/ {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
+    in_guest = 0;
+    in_host = 0;
+    want = 0;
+    guest = "";
+    host = "";
+    next;
+}
+/^IN:[[:space:]]*$/ {
+    in_guest = 1;
+    in_host = 0;
+    guest = "";
+    host = "";
+    want = 0;
+    next;
+}
+/^OUT:/ {
+    in_guest = 0;
+    in_host = 1;
+    host = $0 "\n";
+    if (guest ~ /adds[[:space:]]+x5, x0, x1/ &&
+        guest ~ /adcs[[:space:]]+x8, x6, x7/) {
+        want = 1;
+    }
+    next;
+}
+{
+    if (in_guest) {
+        guest = guest $0 "\n";
+    } else if (in_host) {
+        host = host $0 "\n";
+    }
+}
+END {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
+    exit 1;
+}
+' "$log" >"$adds_adcs_block" || die "failed to locate adjacent ADDS->ADCS host block"
+
+# SUBS reg -> SBCS: subs x5, x0, x1 / sbcs x8, x6, x7 (真正相邻)
+awk '
+BEGIN {
+    in_guest = 0;
+    in_host = 0;
+    want = 0;
+    guest = "";
+    host = "";
+}
+/^----------------$/ {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
+    in_guest = 0;
+    in_host = 0;
+    want = 0;
+    guest = "";
+    host = "";
+    next;
+}
+/^IN:[[:space:]]*$/ {
+    in_guest = 1;
+    in_host = 0;
+    guest = "";
+    host = "";
+    want = 0;
+    next;
+}
+/^OUT:/ {
+    in_guest = 0;
+    in_host = 1;
+    host = $0 "\n";
+    if (guest ~ /subs[[:space:]]+x5, x0, x1/ &&
+        guest ~ /sbcs[[:space:]]+x8, x6, x7/) {
+        want = 1;
+    }
+    next;
+}
+{
+    if (in_guest) {
+        guest = guest $0 "\n";
+    } else if (in_host) {
+        host = host $0 "\n";
+    }
+}
+END {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
+    exit 1;
+}
+' "$log" >"$subs_sbcs_block" || die "failed to locate adjacent SUBS->SBCS host block"
+
+# ADDS reg32 -> ADCS32: adds w5, w0, w1 / adcs w8, w6, w7 (真正相邻)
+awk '
+BEGIN {
+    in_guest = 0;
+    in_host = 0;
+    want = 0;
+    guest = "";
+    host = "";
+}
+/^----------------$/ {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
+    in_guest = 0;
+    in_host = 0;
+    want = 0;
+    guest = "";
+    host = "";
+    next;
+}
+/^IN:[[:space:]]*$/ {
+    in_guest = 1;
+    in_host = 0;
+    guest = "";
+    host = "";
+    want = 0;
+    next;
+}
+/^OUT:/ {
+    in_guest = 0;
+    in_host = 1;
+    host = $0 "\n";
+    if (guest ~ /adds[[:space:]]+w5, w0, w1/ &&
+        guest ~ /adcs[[:space:]]+w8, w6, w7/) {
+        want = 1;
+    }
+    next;
+}
+{
+    if (in_guest) {
+        guest = guest $0 "\n";
+    } else if (in_host) {
+        host = host $0 "\n";
+    }
+}
+END {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
+    exit 1;
+}
+' "$log" >"$adds_adcs32_block" || die "failed to locate adjacent ADDS32->ADCS32 host block"
+
+# SUBS reg32 -> SBCS32: subs w5, w0, w1 / sbcs w8, w6, w7 (真正相邻)
+awk '
+BEGIN {
+    in_guest = 0;
+    in_host = 0;
+    want = 0;
+    guest = "";
+    host = "";
+}
+/^----------------$/ {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
+    in_guest = 0;
+    in_host = 0;
+    want = 0;
+    guest = "";
+    host = "";
+    next;
+}
+/^IN:[[:space:]]*$/ {
+    in_guest = 1;
+    in_host = 0;
+    guest = "";
+    host = "";
+    want = 0;
+    next;
+}
+/^OUT:/ {
+    in_guest = 0;
+    in_host = 1;
+    host = $0 "\n";
+    if (guest ~ /subs[[:space:]]+w5, w0, w1/ &&
+        guest ~ /sbcs[[:space:]]+w8, w6, w7/) {
+        want = 1;
+    }
+    next;
+}
+{
+    if (in_guest) {
+        guest = guest $0 "\n";
+    } else if (in_host) {
+        host = host $0 "\n";
+    }
+}
+END {
+    if (want && host != "") {
+        print host;
+        exit 0;
+    }
+    exit 1;
+}
+' "$log" >"$subs_sbcs32_block" || die "failed to locate adjacent SUBS32->SBCS32 host block"
+
+# --- materialized ADDS -> ADCS direct 硬检查 ---
+# 检查点：addq/addl 后接 adcq/adcl，中间不允许出现 canonical carry decode 胶水
+grep -Eq '\baddq\b' "$adds_adcs_block" \
+    || die "missing host addq for materialized ADDS->ADCS path"
+grep -Eq '\badcq\b' "$adds_adcs_block" \
+    || die "missing host adcq for materialized ADDS->ADCS path"
+awk '
+/addq/ && !seen_add {
+    seen_add = 1;
+    add_count = 1;
+    next;
+}
+seen_add && !seen_adc && /addq/ {
+    add_count++;
+}
+seen_add && !seen_adc && /adcq/ {
+    seen_adc = 1;
+    exit (bad || add_count != 1) ? 1 : 0;
+}
+seen_add && !seen_adc &&
+(/\bshr[lq]\b/ || /\band[lq]\b/ || /\bxor[lq]\b/ ||
+ /\bnot[lq]\b/ || /\bset[bcae]\b/) {
+    bad = 1;
+}
+END {
+    if (!seen_add || !seen_adc || bad || add_count != 1) {
+        exit 1;
+    }
+}
+' "$adds_adcs_block" || die "materialized ADDS->ADCS still has carry decode glue (shr/and/xor/not/setcc) between add and adc"
+
+# --- materialized ADDS32 -> ADCS32 direct 硬检查 ---
+grep -Eq '\baddl\b' "$adds_adcs32_block" \
+    || die "missing host addl for materialized ADDS32->ADCS32 path"
+grep -Eq '\badcl\b' "$adds_adcs32_block" \
+    || die "missing host adcl for materialized ADDS32->ADCS32 path"
+awk '
+/addl/ && !seen_add {
+    seen_add = 1;
+    add_count = 1;
+    next;
+}
+seen_add && !seen_adc && /addl/ {
+    add_count++;
+}
+seen_add && !seen_adc && /adcl/ {
+    seen_adc = 1;
+    exit (bad || add_count != 1) ? 1 : 0;
+}
+seen_add && !seen_adc &&
+(/\bshrl\b/ || /\bandl\b/ || /\bxorl\b/ ||
+ /\bnotl\b/ || /\bset[bcae]\b/) {
+    bad = 1;
+}
+END {
+    if (!seen_add || !seen_adc || bad || add_count != 1) {
+        exit 1;
+    }
+}
+' "$adds_adcs32_block" || die "materialized ADDS32->ADCS32 still has carry decode glue (shr/and/xor/not/setcc) between add and adc"
+
+# --- materialized SUBS -> SBCS direct 硬检查 ---
+# 检查点：subq/subl 后接 sbbq/sbbl，中间不允许出现 canonical carry decode 胶水
+grep -Eq '\bsubq\b' "$subs_sbcs_block" \
+    || die "missing host subq for materialized SUBS->SBCS path"
+grep -Eq '\bsbbq\b' "$subs_sbcs_block" \
+    || die "missing host sbbq for materialized SUBS->SBCS path"
+awk '
+/subq/ && !seen_sub {
+    seen_sub = 1;
+    sub_count = 1;
+    next;
+}
+seen_sub && !seen_sbb && /subq/ {
+    sub_count++;
+}
+seen_sub && !seen_sbb && /sbbq/ {
+    seen_sbb = 1;
+    exit (bad || sub_count != 1) ? 1 : 0;
+}
+seen_sub && !seen_sbb &&
+(/\bshr[lq]\b/ || /\band[lq]\b/ || /\bxor[lq]\b/ ||
+ /\bnot[lq]\b/ || /\bset[bcae]\b/) {
+    bad = 1;
+}
+END {
+    if (!seen_sub || !seen_sbb || bad || sub_count != 1) {
+        exit 1;
+    }
+}
+' "$subs_sbcs_block" || die "materialized SUBS->SBCS still has borrow decode glue (shr/and/xor/not/setcc) between sub and sbb"
+
+# --- materialized SUBS32 -> SBCS32 direct 硬检查 ---
+grep -Eq '\bsubl\b' "$subs_sbcs32_block" \
+    || die "missing host subl for materialized SUBS32->SBCS32 path"
+grep -Eq '\bsbbl\b' "$subs_sbcs32_block" \
+    || die "missing host sbbl for materialized SUBS32->SBCS32 path"
+awk '
+/subl/ && !seen_sub {
+    seen_sub = 1;
+    sub_count = 1;
+    next;
+}
+seen_sub && !seen_sbb && /subl/ {
+    sub_count++;
+}
+seen_sub && !seen_sbb && /sbbl/ {
+    seen_sbb = 1;
+    exit (bad || sub_count != 1) ? 1 : 0;
+}
+seen_sub && !seen_sbb &&
+(/\bshrl\b/ || /\bandl\b/ || /\bxorl\b/ ||
+ /\bnotl\b/ || /\bset[bcae]\b/) {
+    bad = 1;
+}
+END {
+    if (!seen_sub || !seen_sbb || bad || sub_count != 1) {
+        exit 1;
+    }
+}
+' "$subs_sbcs32_block" || die "materialized SUBS32->SBCS32 still has borrow decode glue (shr/and/xor/not/setcc) between sub and sbb"
+
+# ------------------------------------------------------------------------
+# 3.2 对 compare-like CMN/CMP -> ADCS/SBCS 做负向检查（确保不走direct path）
+# ------------------------------------------------------------------------
+
+# 负向检查：真正相邻的 compare-like consumer 不能走 materialized direct 形状。
+# CMN->ADCS fallback 需要先把 carry 物化成整数，再用 add $-1 seed CF，最后才 adc。
+awk '
+/add[ql][[:space:]]+\$-1,/ {
+    saw_seed = 1;
+}
+/adc[ql]/ {
+    found_adc = 1;
+    status = saw_seed ? 0 : 1;
+    exit;
+}
+END {
+    if (!found_adc) {
+        exit 1;
+    }
+    exit status;
+}
+' "$cmn_adcs_block" || die "compare-like CMN->ADCS is missing the carry-seed step before consumer adc"
+
+# CMP->SBCS fallback 需要先把 borrow decode 成位，再通过 btl/cmc seed CF，最后才 sbb。
+awk '
+/btl/ {
+    saw_btl = 1;
+}
+/cmc/ {
+    saw_cmc = 1;
+}
+/sbb[ql]/ {
+    found_sbb = 1;
+    status = (saw_btl && saw_cmc) ? 0 : 1;
+    exit;
+}
+END {
+    if (!found_sbb) {
+        exit 1;
+    }
+    exit status;
+}
+' "$cmp_sbcs_block" || die "compare-like CMP->SBCS is missing the borrow-seed step before consumer sbb"
+
+echo "All codegen guard checks passed:"
+echo "  - Materialized ADDS/ADDS32->ADCS and SUBS/SUBS32->SBCS use direct path (add/adc, sub/sbb without decode glue)"
+echo "  - Truly adjacent compare-like CMN->ADCS and CMP->SBCS use fallback carry/borrow seeding before the consumer adc/sbb"
