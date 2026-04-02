@@ -12002,9 +12002,10 @@ TRANS(UMSUBL, do_muladd, a, true, true, MO_UL)
 static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
                        bool is_sub, bool setflags)
 {
-    TCGv_i32 carry;
+    TCGv_i32 carry = NULL;
     TCGv_i64 tcg_rm, tcg_y, tcg_rn, tcg_rd;
     bool lazy_bcond_cmp = false;
+    bool materialized_bcond_carry = false;
     bool materialized_sbc_sbc = false;
     bool materialized_adc_adc = false;
     bool executed = false;
@@ -12019,6 +12020,16 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
         if (lazy_bcond_cmp &&
             !a64_bcond_cc_supported_for_add_direct(future_bcond_cc)) {
             lazy_bcond_cmp = false;
+        }
+    } else if (setflags && !is_sub) {
+        materialized_bcond_carry =
+            a64_find_future_bcond_gap(s, &gap_insns, &future_bcond_cc);
+        if (materialized_bcond_carry && gap_insns == 0) {
+            materialized_bcond_carry = false;
+        }
+        if (materialized_bcond_carry &&
+            !a64_bcond_cc_supported_for_add_direct(future_bcond_cc)) {
+            materialized_bcond_carry = false;
         }
     }
     if (setflags && a->rd != 31) {
@@ -12112,6 +12123,14 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
                                  NULL, tcg_last_op(),
                                  cc_op, 0);
         s->a64_pending_cc.kind = kind;
+    } else if (materialized_bcond_carry) {
+        a64_record_cmp_for_bcond(s, a->sf, tcg_rn, tcg_rm,
+                                 NULL, tcg_last_op(),
+                                 a->sf ? A64_X86_CC_ADC64
+                                       : A64_X86_CC_ADC32,
+                                 gap_insns);
+        s->a64_pending_cc.kind = A64_PENDING_CC_MATERIALIZED_ADD;
+        s->a64_pending_cc.carry = carry;
     }
     return true;
 }

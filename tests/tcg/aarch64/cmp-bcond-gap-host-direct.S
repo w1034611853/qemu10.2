@@ -36,6 +36,8 @@ _start:
     bl      adds_pl_gap1_case
     bl      adcs_eq_gap1_case
     bl      adcs_vs_gap4_case
+    bl      adcs_rd_eq_gap1_case
+    bl      adcs_rd_vs_gap4_case
     bl      cmp_bad_gap_case
     bl      cmp_flags_writer_case
     bl      cmp_gap9_case
@@ -203,6 +205,36 @@ adcs_vs_gap4_branch:
     b.vs    adcs_vs_gap4_taken
     b       fail
 adcs_vs_gap4_taken:
+    ret
+
+adcs_rd_eq_gap1_case:
+    mov     x15, #5
+    cmp     x15, #3
+    movn    x1, #0
+    mov     x2, #0
+adcs_rd_eq_gap1_producer:
+    adcs    x3, x1, x2
+    safe_gap_1
+adcs_rd_eq_gap1_branch:
+    b.eq    adcs_rd_eq_gap1_taken
+    b       fail
+adcs_rd_eq_gap1_taken:
+    ret
+
+adcs_rd_vs_gap4_case:
+    mov     x15, #5
+    cmp     x15, #3
+    mov     x1, #1
+    lsl     x1, x1, #63
+    sub     x1, x1, #1
+    mov     x2, #0
+adcs_rd_vs_gap4_producer:
+    adcs    x3, x1, x2
+    safe_gap_4
+adcs_rd_vs_gap4_branch:
+    b.vs    adcs_rd_vs_gap4_taken
+    b       fail
+adcs_rd_vs_gap4_taken:
     ret
 
 cmp_bad_gap_case:
