@@ -985,6 +985,38 @@ static bool a64_find_future_condsel_gap(DisasContext *s, uint8_t *gap_insns,
     return false;
 }
 
+static bool a64_find_future_condsel_gap_add(DisasContext *s, uint8_t *gap_insns,
+                                            int *match_cc)
+{
+    target_ulong pc = s->base.pc_next;
+    int remaining = s->base.max_insns - s->base.num_insns;
+    int cc;
+
+    *gap_insns = 0;
+
+    for (int gap = 0; gap < remaining && gap <= A64_CMP_PENDING_GAP_MAX;
+         gap++, pc += 4) {
+        uint32_t insn;
+
+        if (!translator_is_same_page(&s->base, pc)) {
+            return false;
+        }
+
+        insn = arm_ldl_code(s->env, &s->base, pc, s->sctlr_b);
+        if (a64_insn_is_condsel(insn, &cc)) {
+            *gap_insns = gap;
+            if (match_cc) {
+                *match_cc = cc;
+            }
+            return true;
+        }
+        if (!a64_insn_is_cmp_gap_safe(insn)) {
+            return false;
+        }
+    }
+    return false;
+}
+
 static bool a64_insn_is_ccmp(uint32_t insn, int *cc)
 {
     /*
@@ -1283,6 +1315,15 @@ static bool a64_find_future_bcond_gap(DisasContext *s, uint8_t *gap_insns,
 
 static bool a64_find_future_condsel_gap(DisasContext *s, uint8_t *gap_insns,
                                         int *match_cc)
+{
+    (void)s;
+    (void)gap_insns;
+    (void)match_cc;
+    return false;
+}
+
+static bool a64_find_future_condsel_gap_add(DisasContext *s, uint8_t *gap_insns,
+                                            int *match_cc)
 {
     (void)s;
     (void)gap_insns;
@@ -1654,6 +1695,7 @@ static bool a64_try_set_cmp_cond_bool_i32(DisasContext *s, int cc, TCGv_i32 dst)
     TCGCond cond;
 
     if (!s->a64_pending_cc.valid ||
+        s->a64_pending_cc.kind == A64_PENDING_CC_MATERIALIZED_ADD ||
         a64_pending_cc_has_live_split_flags(s) ||
         !a64_cmp_cond_to_tcg(&cond, cc)) {
         return false;
@@ -1685,6 +1727,7 @@ static bool a64_try_peek_cmp_cond_bool_i32(DisasContext *s, int cc,
     TCGCond cond;
 
     if (!s->a64_pending_cc.valid ||
+        s->a64_pending_cc.kind == A64_PENDING_CC_MATERIALIZED_ADD ||
         a64_pending_cc_has_live_split_flags(s) ||
         !a64_cmp_cond_to_tcg(&cond, cc)) {
         return false;
@@ -1710,6 +1753,137 @@ static bool a64_try_peek_cmp_cond_bool_i32(DisasContext *s, int cc,
     return true;
 }
 
+static void a64_set_cond_bool_from_nzcv_bits(TCGv_i32 dst, int cc,
+                                             TCGv_i32 n, TCGv_i32 z,
+                                             TCGv_i32 c, TCGv_i32 v)
+{
+    switch (cc) {
+    case 0: /* eq */
+        tcg_gen_mov_i32(dst, z);
+        break;
+    case 1: /* ne */
+        tcg_gen_xori_i32(dst, z, 1);
+        break;
+    case 2: /* cs */
+        tcg_gen_mov_i32(dst, c);
+        break;
+    case 3: /* cc */
+        tcg_gen_xori_i32(dst, c, 1);
+        break;
+    case 4: /* mi */
+        tcg_gen_mov_i32(dst, n);
+        break;
+    case 5: /* pl */
+        tcg_gen_xori_i32(dst, n, 1);
+        break;
+    case 6: /* vs */
+        tcg_gen_mov_i32(dst, v);
+        break;
+    case 7: /* vc */
+        tcg_gen_xori_i32(dst, v, 1);
+        break;
+    case 8: /* hi */
+        {
+            TCGv_i32 nz = tcg_temp_new_i32();
+
+            tcg_gen_xori_i32(nz, z, 1);
+            tcg_gen_and_i32(dst, c, nz);
+        }
+        break;
+    case 9: /* ls */
+        {
+            TCGv_i32 nc = tcg_temp_new_i32();
+
+            tcg_gen_xori_i32(nc, c, 1);
+            tcg_gen_or_i32(dst, nc, z);
+        }
+        break;
+    case 10: /* ge */
+        tcg_gen_xor_i32(dst, n, v);
+        tcg_gen_xori_i32(dst, dst, 1);
+        break;
+    case 11: /* lt */
+        tcg_gen_xor_i32(dst, n, v);
+        break;
+    case 12: /* gt */
+        {
+            TCGv_i32 nv_eq = tcg_temp_new_i32();
+            TCGv_i32 nz = tcg_temp_new_i32();
+
+            tcg_gen_xor_i32(nv_eq, n, v);
+            tcg_gen_xori_i32(nv_eq, nv_eq, 1);
+            tcg_gen_xori_i32(nz, z, 1);
+            tcg_gen_and_i32(dst, nv_eq, nz);
+        }
+        break;
+    case 13: /* le */
+        {
+            TCGv_i32 nv_ne = tcg_temp_new_i32();
+
+            tcg_gen_xor_i32(nv_ne, n, v);
+            tcg_gen_or_i32(dst, z, nv_ne);
+        }
+        break;
+    case 14: /* al */
+    case 15: /* nv, treated as always */
+        tcg_gen_movi_i32(dst, 1);
+        break;
+    default:
+        g_assert_not_reached();
+    }
+}
+
+static bool a64_try_set_add_cond_bool_i32(DisasContext *s, int cc, TCGv_i32 dst)
+{
+    TCGv_i32 n, z, c, v;
+
+    if (!s->a64_pending_cc.valid ||
+        s->a64_pending_cc.kind != A64_PENDING_CC_MATERIALIZED_ADD ||
+        a64_pending_cc_has_live_split_flags(s) ||
+        (s->a64_pending_cc.cc_op != (s->a64_pending_cc.sf ? A64_X86_CC_ADD64
+                                                          : A64_X86_CC_ADD32))) {
+        return false;
+    }
+
+    n = tcg_temp_new_i32();
+    z = tcg_temp_new_i32();
+    c = tcg_temp_new_i32();
+    v = tcg_temp_new_i32();
+    a64_gen_add_nzcv_bits(s->a64_pending_cc.sf, tcg_temp_new_i64(),
+                          n, z, c, v,
+                          s->a64_pending_cc.lhs, s->a64_pending_cc.rhs);
+    a64_set_cond_bool_from_nzcv_bits(dst, cc, n, z, c, v);
+    a64_cmp_note_consume(s, "add-cc-bool");
+    return true;
+}
+
+static bool a64_try_peek_add_cond_bool_i32(DisasContext *s, int cc,
+                                           TCGv_i32 dst,
+                                           const char *consumer)
+{
+    TCGv_i32 n, z, c, v;
+
+    if (!s->a64_pending_cc.valid ||
+        s->a64_pending_cc.kind != A64_PENDING_CC_MATERIALIZED_ADD ||
+        a64_pending_cc_has_live_split_flags(s) ||
+        (s->a64_pending_cc.cc_op != (s->a64_pending_cc.sf ? A64_X86_CC_ADD64
+                                                          : A64_X86_CC_ADD32))) {
+        return false;
+    }
+
+    n = tcg_temp_new_i32();
+    z = tcg_temp_new_i32();
+    c = tcg_temp_new_i32();
+    v = tcg_temp_new_i32();
+    a64_gen_add_nzcv_bits(s->a64_pending_cc.sf, tcg_temp_new_i64(),
+                          n, z, c, v,
+                          s->a64_pending_cc.lhs, s->a64_pending_cc.rhs);
+    a64_set_cond_bool_from_nzcv_bits(dst, cc, n, z, c, v);
+    s->a64_pending_cc.keep = true;
+    a64_cmp_note_peek(s, consumer);
+    return true;
+}
+
 static void a64_test_cc_cmp_to_bool_i32(TCGv_i32 dst, DisasCompare64 *c64)
 {
     TCGv_i64 tmp = tcg_temp_new_i64();
@@ -1726,6 +1900,9 @@ static TCGv_i32 a64_test_cc_bool_i32(DisasContext *s, int cc)
     DisasCompare64 c64;
 
     if (a64_try_set_cmp_cond_bool_i32(s, cc, ret)) {
+        return ret;
+    }
+    if (a64_try_set_add_cond_bool_i32(s, cc, ret)) {
         return ret;
     }
 
@@ -12280,6 +12457,7 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
     bool lazy_fccmp_cmp = false;
     bool lazy_sbc_cmp = false;
     bool lazy_adc_add = false;
+    bool materialized_condsel_add = false;
     bool materialized_condsel_sub = false;
     bool materialized_sbc_sub = false;
     bool materialized_adc_add = false;
@@ -12371,8 +12549,15 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
             materialized_sbc_sub = a64_find_adjacent_plain_sbc_sub(s, true);
         }
     } else if (setflags && !sub_op) {
+        materialized_condsel_add =
+            a64_find_future_condsel_gap_add(s, &gap_insns, NULL);
+        if (materialized_condsel_add && gap_insns == 0) {
+            materialized_condsel_add = false;
+        }
         /* Materialized ADDS rd - can look for both ADC and ADCS */
-        materialized_adc_add = a64_find_adjacent_plain_adc(s, true);
+        if (!materialized_condsel_add) {
+            materialized_adc_add = a64_find_adjacent_plain_adc(s, true);
+        }
     }
 
     if (!setflags || (!lazy_bcond_cmp && !lazy_condsel_cmp &&
@@ -12424,6 +12609,7 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
     if (lazy_bcond_cmp || lazy_condsel_cmp || lazy_ccmp_cmp ||
         lazy_fcsel_cmp || lazy_fccmp_cmp ||
         lazy_sbc_cmp || lazy_adc_add ||
+        materialized_condsel_add ||
         materialized_condsel_sub ||
         materialized_sbc_sub || materialized_adc_add) {
         A64PendingCCProducerKind kind = A64_PENDING_CC_REWINDABLE_CMP;
@@ -12437,10 +12623,11 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
                                                   : A64_X86_CC_ADD32),
                                  (lazy_bcond_cmp || lazy_condsel_cmp ||
                                   lazy_ccmp_cmp || lazy_fcsel_cmp ||
+                                  materialized_condsel_add ||
                                   materialized_condsel_sub ||
                                   lazy_fccmp_cmp) ?
                                  gap_insns : 0);
-        if (materialized_adc_add) {
+        if (materialized_condsel_add || materialized_adc_add) {
             kind = A64_PENDING_CC_MATERIALIZED_ADD;
         } else if (materialized_condsel_sub || materialized_sbc_sub) {
             kind = A64_PENDING_CC_MATERIALIZED_SUB;
@@ -12809,6 +12996,13 @@ static bool trans_CSEL(DisasContext *s, arg_CSEL *a)
     TCGv_i32 cond32 = tcg_temp_new_i32();
 
     if (a64_try_peek_cmp_cond_bool_i32(s, a->cond, cond32, "CSEL-pending")) {
+        TCGv_i64 cond64 = tcg_temp_new_i64();
+
+        tcg_gen_extu_i32_i64(cond64, cond32);
+        c.cond = TCG_COND_NE;
+        c.value = cond64;
+    } else if (a64_try_peek_add_cond_bool_i32(s, a->cond, cond32,
+                                              "CSEL-add-pending")) {
         TCGv_i64 cond64 = tcg_temp_new_i64();
 
         tcg_gen_extu_i32_i64(cond64, cond32);
