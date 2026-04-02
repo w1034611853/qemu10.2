@@ -226,6 +226,8 @@ assert_direct_positive "adcs rd eq gap1" adcs_rd_eq_gap1_producer adcs_rd_eq_gap
 assert_direct_positive "adcs rd vs gap4" adcs_rd_vs_gap4_producer adcs_rd_vs_gap4_branch 5
 assert_direct_positive "sbcs rd cs gap1" sbcs_rd_cs_gap1_producer sbcs_rd_cs_gap1_branch 2
 assert_direct_positive "sbcs rd mi gap4" sbcs_rd_mi_gap4_producer sbcs_rd_mi_gap4_branch 5
+assert_direct_positive "adcs32 rd eq gap1" adcs32_rd_eq_gap1_producer adcs32_rd_eq_gap1_branch 2
+assert_direct_positive "sbcs32 rd mi gap4" sbcs32_rd_mi_gap4_producer sbcs32_rd_mi_gap4_branch 5
 
 assert_no_use "non-whitelist gap" cmp_bad_gap_producer
 assert_no_use "flags writer gap" cmp_flags_writer_producer

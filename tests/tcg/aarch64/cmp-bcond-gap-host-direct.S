@@ -40,6 +40,8 @@ _start:
     bl      adcs_rd_vs_gap4_case
     bl      sbcs_rd_cs_gap1_case
     bl      sbcs_rd_mi_gap4_case
+    bl      adcs32_rd_eq_gap1_case
+    bl      sbcs32_rd_mi_gap4_case
     bl      cmp_bad_gap_case
     bl      cmp_flags_writer_case
     bl      cmp_gap9_case
@@ -265,6 +267,34 @@ sbcs_rd_mi_gap4_branch:
     b.mi    sbcs_rd_mi_gap4_taken
     b       fail
 sbcs_rd_mi_gap4_taken:
+    ret
+
+adcs32_rd_eq_gap1_case:
+    mov     w15, #5
+    cmp     w15, #3
+    movn    w1, #0
+    mov     w2, #0
+adcs32_rd_eq_gap1_producer:
+    adcs    w3, w1, w2
+    safe_gap_1
+adcs32_rd_eq_gap1_branch:
+    b.eq    adcs32_rd_eq_gap1_taken
+    b       fail
+adcs32_rd_eq_gap1_taken:
+    ret
+
+sbcs32_rd_mi_gap4_case:
+    mov     w15, #5
+    cmp     w15, #3
+    mov     w1, #1
+    mov     w2, #3
+sbcs32_rd_mi_gap4_producer:
+    sbcs    w3, w1, w2
+    safe_gap_4
+sbcs32_rd_mi_gap4_branch:
+    b.mi    sbcs32_rd_mi_gap4_taken
+    b       fail
+sbcs32_rd_mi_gap4_taken:
     ret
 
 cmp_bad_gap_case:
