@@ -122,6 +122,26 @@ adds-rd-ccmp-gap-host-direct: LDFLAGS += -nostdlib
 run-adds-rd-ccmp-gap-host-direct-codegen: adds-rd-ccmp-gap-host-direct
 	$(call run-test,$@,bash $(AARCH64_SRC)/check-adds-rd-ccmp-gap-host-direct.sh "$(QEMU)" $<)
 
+AARCH64_TESTS += subs-rd-fcsel-gap-host-direct
+subs-rd-fcsel-gap-host-direct: LDFLAGS += -nostdlib
+run-subs-rd-fcsel-gap-host-direct-codegen: subs-rd-fcsel-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-subs-rd-fcsel-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += adds-rd-fcsel-gap-host-direct
+adds-rd-fcsel-gap-host-direct: LDFLAGS += -nostdlib
+run-adds-rd-fcsel-gap-host-direct-codegen: adds-rd-fcsel-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-adds-rd-fcsel-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += subs-rd-fccmp-gap-host-direct
+subs-rd-fccmp-gap-host-direct: LDFLAGS += -nostdlib
+run-subs-rd-fccmp-gap-host-direct-codegen: subs-rd-fccmp-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-subs-rd-fccmp-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += adds-rd-fccmp-gap-host-direct
+adds-rd-fccmp-gap-host-direct: LDFLAGS += -nostdlib
+run-adds-rd-fccmp-gap-host-direct-codegen: adds-rd-fccmp-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-adds-rd-fccmp-gap-host-direct.sh "$(QEMU)" $<)
+
 # Pauth Tests
 ifneq ($(CROSS_CC_HAS_ARMV8_3),)
 AARCH64_TESTS += pauth-1 pauth-2 pauth-4 pauth-5 test-2375
