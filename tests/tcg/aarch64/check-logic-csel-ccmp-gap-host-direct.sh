@@ -25,8 +25,11 @@ esac
 
 log="${exe}.logic_csel_ccmp_gap.log"
 nm_log="${exe}.logic_csel_ccmp_gap.nm"
+block_dir="${exe}.logic_csel_ccmp_gap.blocks"
 rm -f "$log"
 rm -f "$nm_log"
+rm -rf "$block_dir"
+mkdir -p "$block_dir"
 
 "$qemu_bin" -d op,in_asm,nochain -D "$log" "$exe" >/dev/null 2>&1 \
     || die "running $exe under $qemu_bin failed"
@@ -54,6 +57,34 @@ sym_addr()
     ' "$nm_log" || die "failed to resolve symbol $sym in $exe"
 }
 
+extract_case_block()
+{
+    local label=$1
+    local case_sym=$2
+    local case_addr
+    local start_line
+    local block
+
+    case_addr=$(sym_addr "$case_sym")
+    block="${block_dir}/${label}.op"
+    start_line=$(rg -n -m1 "^ ---- 0*${case_addr} " "$log" | cut -d: -f1) \
+        || die "failed to locate OP block for $label"
+
+    awk -v start="$start_line" '
+    NR >= start {
+        if (NR > start && /^----------------$/) {
+            exit 0;
+        }
+        print;
+    }
+    END {
+        exit(start ? 0 : 1);
+    }
+    ' "$log" >"$block" || die "failed to extract OP block for $label"
+
+    echo "$block"
+}
+
 assert_no_cmp_pending()
 {
     local label=$1
@@ -68,16 +99,47 @@ assert_no_cmp_pending()
     fi
 }
 
+assert_case_contains()
+{
+    local label=$1
+    local case_sym=$2
+    local pattern=$3
+    local block
+
+    block=$(extract_case_block "$label" "$case_sym")
+    rg -q "$pattern" "$block" \
+        || die "expected pattern '$pattern' in $label OP block"
+}
+
 assert_no_cmp_pending "tst csel eq gap1" tst_csel_eq_gap1_case
 assert_no_cmp_pending "ands csel mi gap4" ands_csel_mi_gap4_case
 assert_no_cmp_pending "tst ccmp true gap1" tst_ccmp_true_gap1_case
 assert_no_cmp_pending "ands ccmp false gap4" ands_ccmp_false_gap4_case
 
-rg -q 'x86_test_capture_rawflags_i64' "$log" \
-    || die "expected logical raw-flags capture op"
-rg -q 'movcond_i64' "$log" \
-    || die "expected movcond path for logical -> CSEL cases"
-rg -q 'movcond_i32' "$log" \
-    || die "expected movcond path for logical -> CCMP cases"
-rg -q 'mov_i32 x86_raw_flags' "$log" \
-    || die "expected raw-flags state update in logical path"
+assert_case_contains "tst csel eq gap1" tst_csel_eq_gap1_case \
+    'x86_test_capture_rawflags_i64'
+assert_case_contains "tst csel eq gap1" tst_csel_eq_gap1_case \
+    'movcond_i64'
+assert_case_contains "tst csel eq gap1" tst_csel_eq_gap1_case \
+    'mov_i32 x86_cc_op,\$0x6'
+
+assert_case_contains "ands csel mi gap4" ands_csel_mi_gap4_case \
+    'x86_test_capture_rawflags_i64'
+assert_case_contains "ands csel mi gap4" ands_csel_mi_gap4_case \
+    'movcond_i64'
+assert_case_contains "ands csel mi gap4" ands_csel_mi_gap4_case \
+    'and_i32 .*x86_raw_flags,\$0x8000'
+
+assert_case_contains "tst ccmp true gap1" tst_ccmp_true_gap1_case \
+    'x86_test_capture_rawflags_i64'
+assert_case_contains "tst ccmp true gap1" tst_ccmp_true_gap1_case \
+    'movcond_i32'
+assert_case_contains "tst ccmp true gap1" tst_ccmp_true_gap1_case \
+    'mov_i32 x86_raw_flags'
+
+assert_case_contains "ands ccmp false gap4" ands_ccmp_false_gap4_case \
+    'x86_test_capture_rawflags_i64'
+assert_case_contains "ands ccmp false gap4" ands_ccmp_false_gap4_case \
+    'movcond_i32'
+assert_case_contains "ands ccmp false gap4" ands_ccmp_false_gap4_case \
+    'and_i32 .*x86_raw_flags,\$0x4000'
