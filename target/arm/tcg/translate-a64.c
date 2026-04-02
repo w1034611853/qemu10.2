@@ -1761,18 +1761,36 @@ static bool a64_cmp_cond_to_x86_jcc(int *jcc, int cc)
 
 static bool a64_bcond_cc_supported_for_add_direct(int cc)
 {
-    TCGCond cond;
-    int jcc;
-
-    return a64_cmp_cond_to_tcg(&cond, cc) ||
-           a64_cmp_cond_to_x86_jcc(&jcc, cc);
+    switch (cc) {
+    case 0:  /* eq */
+    case 1:  /* ne */
+    case 4:  /* mi */
+    case 5:  /* pl */
+    case 6:  /* vs */
+    case 7:  /* vc */
+    case 10: /* ge */
+    case 11: /* lt */
+    case 12: /* gt */
+    case 13: /* le */
+        return true;
+    default:
+        return false;
+    }
 }
 #else
 static bool a64_bcond_cc_supported_for_add_direct(int cc)
 {
-    TCGCond cond;
-
-    return a64_cmp_cond_to_tcg(&cond, cc);
+    switch (cc) {
+    case 0:  /* eq */
+    case 1:  /* ne */
+    case 10: /* ge */
+    case 11: /* lt */
+    case 12: /* gt */
+    case 13: /* le */
+        return true;
+    default:
+        return false;
+    }
 }
 #endif
 
@@ -2811,6 +2829,10 @@ static bool a64_try_emit_x86_cmp_bcond(DisasContext *s, int cc,
         (s->a64_pending_cc.rewind != NULL &&
          !a64_pending_cc_is_adjacent_to_curr_insn(s)) ||
         (!use_tcg_cond && !use_x86_jcc)) {
+        return false;
+    }
+    if ((add_like || adc_like) &&
+        !a64_bcond_cc_supported_for_add_direct(cc)) {
         return false;
     }
 
