@@ -948,6 +948,7 @@ static bool a64_insn_is_condsel(uint32_t insn, int *cc)
 }
 
 static bool a64_cmp_cond_to_tcg(TCGCond *cond, int cc);
+static void a64_test_cc_cmp_to_bool_i32(TCGv_i32 dst, DisasCompare64 *c64);
 
 static bool a64_find_future_condsel_gap(DisasContext *s, uint8_t *gap_insns,
                                         int *match_cc)
@@ -1983,6 +1984,31 @@ static bool a64_try_peek_add_cond_bool_i32(DisasContext *s, int cc,
                           n, z, c, v,
                           s->a64_pending_cc.lhs, s->a64_pending_cc.rhs);
     a64_set_cond_bool_from_nzcv_bits(dst, cc, n, z, c, v);
+    s->a64_pending_cc.keep = true;
+    a64_cmp_note_peek(s, consumer);
+    return true;
+}
+
+static bool a64_try_peek_raw_pending_cond_bool_i32(DisasContext *s, int cc,
+                                                   TCGv_i32 dst,
+                                                   const char *consumer,
+                                                   A64PendingCCProducerKind kind,
+                                                   uint32_t cc_op64,
+                                                   uint32_t cc_op32)
+{
+    DisasCompare64 c64;
+
+    if (!s->a64_pending_cc.valid ||
+        s->a64_pending_cc.kind != kind ||
+        a64_pending_cc_has_live_split_flags(s) ||
+        s->a64_flags_rep != A64_FLAGS_REP_RAW ||
+        (s->a64_pending_cc.cc_op != cc_op64 &&
+         s->a64_pending_cc.cc_op != cc_op32)) {
+        return false;
+    }
+
+    a64_test_cc_rawflags(s, &c64, cc);
+    a64_test_cc_cmp_to_bool_i32(dst, &c64);
     s->a64_pending_cc.keep = true;
     a64_cmp_note_peek(s, consumer);
     return true;
@@ -12895,17 +12921,26 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
     TCGv_i32 carry = NULL;
     TCGv_i64 tcg_rm, tcg_y, tcg_rn, tcg_rd;
     bool lazy_bcond_cmp = false;
+    bool materialized_condsel_carry = false;
+    bool materialized_condsel_sub = false;
     bool materialized_bcond_carry = false;
     bool materialized_bcond_sub = false;
     bool materialized_sbc_sbc = false;
     bool materialized_adc_adc = false;
     bool executed = false;
     uint8_t gap_insns = 0;
+    uint8_t condsel_gap_insns = 0;
+    uint8_t condsel_sub_gap_insns = 0;
     int future_bcond_cc = -1;
 
     if (setflags && is_sub && a->rd == 31) {
         lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns, NULL);
     } else if (setflags && is_sub) {
+        materialized_condsel_sub =
+            a64_find_future_condsel_gap_add(s, &condsel_sub_gap_insns, NULL);
+        if (materialized_condsel_sub && condsel_sub_gap_insns == 0) {
+            materialized_condsel_sub = false;
+        }
         materialized_bcond_sub =
             a64_find_future_bcond_gap(s, &gap_insns, NULL);
         if (materialized_bcond_sub && gap_insns == 0) {
@@ -12919,6 +12954,11 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
             lazy_bcond_cmp = false;
         }
     } else if (setflags && !is_sub) {
+        materialized_condsel_carry =
+            a64_find_future_condsel_gap_add(s, &condsel_gap_insns, NULL);
+        if (materialized_condsel_carry && condsel_gap_insns == 0) {
+            materialized_condsel_carry = false;
+        }
         materialized_bcond_carry =
             a64_find_future_bcond_gap(s, &gap_insns, &future_bcond_cc);
         if (materialized_bcond_carry && gap_insns == 0) {
@@ -12930,10 +12970,10 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
         }
     }
     if (setflags && a->rd != 31) {
-        if (is_sub) {
+        if (is_sub && !materialized_condsel_sub) {
             materialized_sbc_sbc =
                 a64_find_adjacent_plain_sbc_sub_same_width(s, a->sf);
-        } else {
+        } else if (!materialized_condsel_carry) {
             materialized_adc_adc =
                 a64_find_adjacent_plain_adc_same_width(s, a->sf);
         }
@@ -13007,18 +13047,25 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
         }
     }
 
-    if (materialized_adc_adc || materialized_sbc_sbc) {
-        A64PendingCCProducerKind kind = materialized_adc_adc
-            ? A64_PENDING_CC_MATERIALIZED_ADD
-            : A64_PENDING_CC_MATERIALIZED_SUB;
-        uint32_t cc_op = is_sub ? (a->sf ? A64_X86_CC_SBC64
-                                         : A64_X86_CC_SBC32)
-                                : (a->sf ? A64_X86_CC_ADC64
-                                         : A64_X86_CC_ADC32);
+    if (materialized_condsel_carry || materialized_condsel_sub ||
+        materialized_adc_adc ||
+        materialized_sbc_sbc) {
+        A64PendingCCProducerKind kind;
+        uint32_t cc_op;
+
+        if (is_sub) {
+            kind = A64_PENDING_CC_MATERIALIZED_SUB;
+            cc_op = a->sf ? A64_X86_CC_SBC64 : A64_X86_CC_SBC32;
+        } else {
+            kind = A64_PENDING_CC_MATERIALIZED_ADD;
+            cc_op = a->sf ? A64_X86_CC_ADC64 : A64_X86_CC_ADC32;
+        }
 
         a64_record_cmp_for_bcond(s, a->sf, tcg_rn, tcg_rm,
                                  NULL, tcg_last_op(),
-                                 cc_op, 0);
+                                 cc_op,
+                                 materialized_condsel_carry ? condsel_gap_insns :
+                                 materialized_condsel_sub ? condsel_sub_gap_insns : 0);
         s->a64_pending_cc.kind = kind;
     } else if (materialized_bcond_carry) {
         a64_record_cmp_for_bcond(s, a->sf, tcg_rn, tcg_rm,
@@ -13188,6 +13235,24 @@ static bool trans_CSEL(DisasContext *s, arg_CSEL *a)
         c.value = cond64;
     } else if (a64_try_peek_add_cond_bool_i32(s, a->cond, cond32,
                                               "CSEL-add-pending")) {
+        TCGv_i64 cond64 = tcg_temp_new_i64();
+
+        tcg_gen_extu_i32_i64(cond64, cond32);
+        c.cond = TCG_COND_NE;
+        c.value = cond64;
+    } else if (a64_try_peek_raw_pending_cond_bool_i32(
+                   s, a->cond, cond32, "CSEL-carry-pending",
+                   A64_PENDING_CC_MATERIALIZED_ADD,
+                   A64_X86_CC_ADC64, A64_X86_CC_ADC32)) {
+        TCGv_i64 cond64 = tcg_temp_new_i64();
+
+        tcg_gen_extu_i32_i64(cond64, cond32);
+        c.cond = TCG_COND_NE;
+        c.value = cond64;
+    } else if (a64_try_peek_raw_pending_cond_bool_i32(
+                   s, a->cond, cond32, "CSEL-carry-pending",
+                   A64_PENDING_CC_MATERIALIZED_SUB,
+                   A64_X86_CC_SBC64, A64_X86_CC_SBC32)) {
         TCGv_i64 cond64 = tcg_temp_new_i64();
 
         tcg_gen_extu_i32_i64(cond64, cond32);
