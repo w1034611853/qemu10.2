@@ -11003,6 +11003,24 @@ static bool trans_FCSEL(DisasContext *s, arg_FCSEL *a)
         tcg_gen_extu_i32_i64(cond64, cond32);
         c.cond = TCG_COND_NE;
         c.value = cond64;
+    } else if (a64_try_peek_raw_pending_cond_bool_i32(
+                   s, a->cond, cond32, "FCSEL-carry-pending",
+                   A64_PENDING_CC_MATERIALIZED_ADD,
+                   A64_X86_CC_ADC64, A64_X86_CC_ADC32)) {
+        TCGv_i64 cond64 = tcg_temp_new_i64();
+
+        tcg_gen_extu_i32_i64(cond64, cond32);
+        c.cond = TCG_COND_NE;
+        c.value = cond64;
+    } else if (a64_try_peek_raw_pending_cond_bool_i32(
+                   s, a->cond, cond32, "FCSEL-carry-pending",
+                   A64_PENDING_CC_MATERIALIZED_SUB,
+                   A64_X86_CC_SBC64, A64_X86_CC_SBC32)) {
+        TCGv_i64 cond64 = tcg_temp_new_i64();
+
+        tcg_gen_extu_i32_i64(cond64, cond32);
+        c.cond = TCG_COND_NE;
+        c.value = cond64;
     } else if (a64_try_peek_add_cond_bool_i32(s, a->cond, cond32,
                                               "FCSEL-add-pending")) {
         TCGv_i64 cond64 = tcg_temp_new_i64();
@@ -12931,6 +12949,10 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
     bool materialized_condsel_sub = false;
     bool materialized_ccmp_carry = false;
     bool materialized_ccmp_sub = false;
+    bool materialized_fcsel_carry = false;
+    bool materialized_fcsel_sub = false;
+    bool materialized_fccmp_carry = false;
+    bool materialized_fccmp_sub = false;
     bool materialized_bcond_carry = false;
     bool materialized_bcond_sub = false;
     bool materialized_sbc_sbc = false;
@@ -12941,6 +12963,10 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
     uint8_t condsel_sub_gap_insns = 0;
     uint8_t ccmp_gap_insns = 0;
     uint8_t ccmp_sub_gap_insns = 0;
+    uint8_t fcsel_gap_insns = 0;
+    uint8_t fcsel_sub_gap_insns = 0;
+    uint8_t fccmp_gap_insns = 0;
+    uint8_t fccmp_sub_gap_insns = 0;
     int future_bcond_cc = -1;
 
     if (setflags && is_sub && a->rd == 31) {
@@ -12956,6 +12982,21 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
                 a64_find_future_ccmp_gap(s, &ccmp_sub_gap_insns, NULL);
             if (materialized_ccmp_sub && ccmp_sub_gap_insns == 0) {
                 materialized_ccmp_sub = false;
+            }
+        }
+        if (!materialized_condsel_sub && !materialized_ccmp_sub) {
+            materialized_fcsel_sub =
+                a64_find_future_fcsel_gap_add(s, &fcsel_sub_gap_insns, NULL);
+            if (materialized_fcsel_sub && fcsel_sub_gap_insns == 0) {
+                materialized_fcsel_sub = false;
+            }
+        }
+        if (!materialized_condsel_sub && !materialized_ccmp_sub &&
+            !materialized_fcsel_sub) {
+            materialized_fccmp_sub =
+                a64_find_future_fccmp_gap_add(s, &fccmp_sub_gap_insns, NULL);
+            if (materialized_fccmp_sub && fccmp_sub_gap_insns == 0) {
+                materialized_fccmp_sub = false;
             }
         }
         materialized_bcond_sub =
@@ -12983,6 +13024,21 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
                 materialized_ccmp_carry = false;
             }
         }
+        if (!materialized_condsel_carry && !materialized_ccmp_carry) {
+            materialized_fcsel_carry =
+                a64_find_future_fcsel_gap_add(s, &fcsel_gap_insns, NULL);
+            if (materialized_fcsel_carry && fcsel_gap_insns == 0) {
+                materialized_fcsel_carry = false;
+            }
+        }
+        if (!materialized_condsel_carry && !materialized_ccmp_carry &&
+            !materialized_fcsel_carry) {
+            materialized_fccmp_carry =
+                a64_find_future_fccmp_gap_add(s, &fccmp_gap_insns, NULL);
+            if (materialized_fccmp_carry && fccmp_gap_insns == 0) {
+                materialized_fccmp_carry = false;
+            }
+        }
         materialized_bcond_carry =
             a64_find_future_bcond_gap(s, &gap_insns, &future_bcond_cc);
         if (materialized_bcond_carry && gap_insns == 0) {
@@ -12994,11 +13050,13 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
         }
     }
     if (setflags && a->rd != 31) {
-        if (is_sub && !materialized_condsel_sub && !materialized_ccmp_sub) {
+        if (is_sub && !materialized_condsel_sub && !materialized_ccmp_sub &&
+            !materialized_fcsel_sub && !materialized_fccmp_sub) {
             materialized_sbc_sbc =
                 a64_find_adjacent_plain_sbc_sub_same_width(s, a->sf);
         } else if (!is_sub &&
-                   !materialized_condsel_carry && !materialized_ccmp_carry) {
+                   !materialized_condsel_carry && !materialized_ccmp_carry &&
+                   !materialized_fcsel_carry && !materialized_fccmp_carry) {
             materialized_adc_adc =
                 a64_find_adjacent_plain_adc_same_width(s, a->sf);
         }
@@ -13074,6 +13132,8 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
 
     if (materialized_condsel_carry || materialized_condsel_sub ||
         materialized_ccmp_carry || materialized_ccmp_sub ||
+        materialized_fcsel_carry || materialized_fcsel_sub ||
+        materialized_fccmp_carry || materialized_fccmp_sub ||
         materialized_adc_adc ||
         materialized_sbc_sbc) {
         A64PendingCCProducerKind kind;
@@ -13094,6 +13154,10 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
                                  materialized_condsel_sub ? condsel_sub_gap_insns :
                                  materialized_ccmp_carry ? ccmp_gap_insns :
                                  materialized_ccmp_sub ? ccmp_sub_gap_insns :
+                                 materialized_fcsel_carry ? fcsel_gap_insns :
+                                 materialized_fcsel_sub ? fcsel_sub_gap_insns :
+                                 materialized_fccmp_carry ? fccmp_gap_insns :
+                                 materialized_fccmp_sub ? fccmp_sub_gap_insns :
                                  0);
         s->a64_pending_cc.kind = kind;
     } else if (materialized_bcond_carry) {
