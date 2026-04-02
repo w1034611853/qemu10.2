@@ -12280,6 +12280,7 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
     bool lazy_fccmp_cmp = false;
     bool lazy_sbc_cmp = false;
     bool lazy_adc_add = false;
+    bool materialized_condsel_sub = false;
     bool materialized_sbc_sub = false;
     bool materialized_adc_add = false;
     uint8_t gap_insns = 0;
@@ -12360,8 +12361,15 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
             lazy_adc_add = a64_find_adjacent_plain_adc(s, false);
         }
     } else if (setflags && sub_op) {
+        materialized_condsel_sub =
+            a64_find_future_condsel_gap(s, &gap_insns, NULL);
+        if (materialized_condsel_sub && gap_insns == 0) {
+            materialized_condsel_sub = false;
+        }
         /* Materialized SUBS rd - can look for both SBC and SBCS */
-        materialized_sbc_sub = a64_find_adjacent_plain_sbc_sub(s, true);
+        if (!materialized_condsel_sub) {
+            materialized_sbc_sub = a64_find_adjacent_plain_sbc_sub(s, true);
+        }
     } else if (setflags && !sub_op) {
         /* Materialized ADDS rd - can look for both ADC and ADCS */
         materialized_adc_add = a64_find_adjacent_plain_adc(s, true);
@@ -12416,6 +12424,7 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
     if (lazy_bcond_cmp || lazy_condsel_cmp || lazy_ccmp_cmp ||
         lazy_fcsel_cmp || lazy_fccmp_cmp ||
         lazy_sbc_cmp || lazy_adc_add ||
+        materialized_condsel_sub ||
         materialized_sbc_sub || materialized_adc_add) {
         A64PendingCCProducerKind kind = A64_PENDING_CC_REWINDABLE_CMP;
 
@@ -12428,11 +12437,12 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
                                                   : A64_X86_CC_ADD32),
                                  (lazy_bcond_cmp || lazy_condsel_cmp ||
                                   lazy_ccmp_cmp || lazy_fcsel_cmp ||
+                                  materialized_condsel_sub ||
                                   lazy_fccmp_cmp) ?
                                  gap_insns : 0);
         if (materialized_adc_add) {
             kind = A64_PENDING_CC_MATERIALIZED_ADD;
-        } else if (materialized_sbc_sub) {
+        } else if (materialized_condsel_sub || materialized_sbc_sub) {
             kind = A64_PENDING_CC_MATERIALIZED_SUB;
         }
         s->a64_pending_cc.kind = kind;
