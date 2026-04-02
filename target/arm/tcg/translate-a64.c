@@ -12006,6 +12006,7 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
     TCGv_i64 tcg_rm, tcg_y, tcg_rn, tcg_rd;
     bool lazy_bcond_cmp = false;
     bool materialized_bcond_carry = false;
+    bool materialized_bcond_sub = false;
     bool materialized_sbc_sbc = false;
     bool materialized_adc_adc = false;
     bool executed = false;
@@ -12014,6 +12015,12 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
 
     if (setflags && is_sub && a->rd == 31) {
         lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns, NULL);
+    } else if (setflags && is_sub) {
+        materialized_bcond_sub =
+            a64_find_future_bcond_gap(s, &gap_insns, NULL);
+        if (materialized_bcond_sub && gap_insns == 0) {
+            materialized_bcond_sub = false;
+        }
     } else if (setflags && !is_sub && a->rd == 31) {
         lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns,
                                                    &future_bcond_cc);
@@ -12131,6 +12138,16 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
                                  gap_insns);
         s->a64_pending_cc.kind = A64_PENDING_CC_MATERIALIZED_ADD;
         s->a64_pending_cc.carry = carry;
+    } else if (materialized_bcond_sub) {
+        TCGv_i64 rhs_eff = tcg_temp_new_i64();
+
+        a64_gen_sbc_cmp_rhs(a->sf, rhs_eff, tcg_y, carry);
+        a64_record_cmp_for_bcond(s, a->sf, tcg_rn, rhs_eff,
+                                 NULL, tcg_last_op(),
+                                 a->sf ? A64_X86_CC_SBC64
+                                       : A64_X86_CC_SBC32,
+                                 gap_insns);
+        s->a64_pending_cc.kind = A64_PENDING_CC_MATERIALIZED_SUB;
     }
     return true;
 }
