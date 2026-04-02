@@ -109,6 +109,16 @@ assert_positive "cmp csel lt gap4" \
     cmp_csel_lt_gap4_producer cmp_csel_lt_gap4_consumer 5
 assert_positive "cmp csel hi gap8" \
     cmp_csel_hi_gap8_producer cmp_csel_hi_gap8_consumer 9
+assert_positive "cmp csinc eq gap1" \
+    cmp_csinc_eq_gap1_producer cmp_csinc_eq_gap1_consumer 2
+assert_positive "cmp csinv eq gap4" \
+    cmp_csinv_eq_gap4_producer cmp_csinv_eq_gap4_consumer 5
+assert_positive "cmp csneg eq gap8" \
+    cmp_csneg_eq_gap8_producer cmp_csneg_eq_gap8_consumer 9
+assert_positive "cmp cset eq gap1" \
+    cmp_cset_eq_gap1_producer cmp_cset_eq_gap1_consumer 2
+assert_positive "cmp csetm hi gap4" \
+    cmp_csetm_hi_gap4_producer cmp_csetm_hi_gap4_consumer 5
 
 assert_no_use "cmp csel bad gap" cmp_csel_bad_gap_producer
 
