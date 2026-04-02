@@ -87,6 +87,11 @@ cmp-ccmp-gap-host-direct: LDFLAGS += -nostdlib
 run-cmp-ccmp-gap-host-direct-codegen: cmp-ccmp-gap-host-direct
 	$(call run-test,$@,bash $(AARCH64_SRC)/check-cmp-ccmp-gap-host-direct.sh "$(QEMU)" $<)
 
+AARCH64_TESTS += cmp-fcsel-gap-host-direct
+cmp-fcsel-gap-host-direct: LDFLAGS += -nostdlib
+run-cmp-fcsel-gap-host-direct-codegen: cmp-fcsel-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-cmp-fcsel-gap-host-direct.sh "$(QEMU)" $<)
+
 # Pauth Tests
 ifneq ($(CROSS_CC_HAS_ARMV8_3),)
 AARCH64_TESTS += pauth-1 pauth-2 pauth-4 pauth-5 test-2375
