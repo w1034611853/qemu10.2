@@ -87,7 +87,7 @@ Current worktree support now includes:
 
 Current condition coverage on the add side includes:
 
-- `EQ/NE/GE/LT/GT/LE`
+- `EQ/NE/CS/CC/HI/LS/GE/LT/GT/LE`
 - `MI/PL/VS/VC`
 
 Current materialized carry-producer scope:
@@ -382,6 +382,29 @@ Post-fix closure evidence:
 - `check-cmp-bcond-ext-host-direct.sh`: PASS
 - `check-adc-sbc-host-direct.sh`: PASS
 - `nzcv-status4`: PASS
+
+On the merged main branch, the add/adc unsigned branch subset was later
+re-enabled with dedicated lowering rather than the old compare-style mapping:
+
+- `CS/CC` now use add/adc-specific carry JCC lowering
+- `HI` now uses a zero-clear guard plus carry-set branch shape
+- `LS` now uses a zero-set or carry-clear branch shape
+
+This restores:
+
+- `CMN/ADDS xzr -> B.cond` for `CS/CC/HI/LS`
+- `ADCS xzr -> B.cond` for `CS/CC/HI/LS`
+- `ADCS rd -> B.cond` for `CS/CC/HI/LS`
+
+Fresh evidence after that restoration:
+
+- `check-cmp-bcond-gap-host-direct.sh`: PASS
+- `cmp-bcond-gap-host-direct`: exit code `0`
+- `adcsbc-bench`: `RC=0`
+- `cmpstress-o3`: `RC=0`
+- `nzcv-status4`: `PASS`
+- `check-adc-sbc-host-direct.sh`: PASS
+- `check-cmp-bcond-ext-host-direct.sh`: PASS
 
 ## First Non-Branch Slice
 

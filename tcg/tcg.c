@@ -1304,12 +1304,24 @@ static const TCGOutOp * const all_outop[NB_OPS] = {
     OUTOP(INDEX_op_x86_add_jcc_capture_rawflags,
           TCGOutOpX86CmpJccCaptureRaw,
           outop_x86_add_jcc_capture_rawflags),
+    OUTOP(INDEX_op_x86_add_hi_jcc_capture_rawflags,
+          TCGOutOpX86CmpJccCaptureRaw,
+          outop_x86_add_hi_jcc_capture_rawflags),
+    OUTOP(INDEX_op_x86_add_ls_jcc_capture_rawflags,
+          TCGOutOpX86CmpJccCaptureRaw,
+          outop_x86_add_ls_jcc_capture_rawflags),
     OUTOP(INDEX_op_x86_adc_brcond_capture_rawflags,
           TCGOutOpX86AdcBrcondCaptureRaw,
           outop_x86_adc_brcond_capture_rawflags),
     OUTOP(INDEX_op_x86_adc_jcc_capture_rawflags,
           TCGOutOpX86AdcJccCaptureRaw,
           outop_x86_adc_jcc_capture_rawflags),
+    OUTOP(INDEX_op_x86_adc_hi_jcc_capture_rawflags,
+          TCGOutOpX86AdcJccCaptureRaw,
+          outop_x86_adc_hi_jcc_capture_rawflags),
+    OUTOP(INDEX_op_x86_adc_ls_jcc_capture_rawflags,
+          TCGOutOpX86AdcJccCaptureRaw,
+          outop_x86_adc_ls_jcc_capture_rawflags),
     OUTOP(INDEX_op_x86_and_capture_rawflags,
           TCGOutOpX86AndCaptureRaw,
           outop_x86_and_capture_rawflags),
@@ -6143,6 +6155,8 @@ static void tcg_reg_alloc_op(TCGContext *s, const TCGOp *op)
         break;
 
     case INDEX_op_x86_add_jcc_capture_rawflags:
+    case INDEX_op_x86_add_hi_jcc_capture_rawflags:
+    case INDEX_op_x86_add_ls_jcc_capture_rawflags:
         {
             const TCGOutOpX86CmpJccCaptureRaw *out =
                 container_of(all_outop[op->opc],
@@ -6180,6 +6194,8 @@ static void tcg_reg_alloc_op(TCGContext *s, const TCGOp *op)
         break;
 
     case INDEX_op_x86_adc_jcc_capture_rawflags:
+    case INDEX_op_x86_adc_hi_jcc_capture_rawflags:
+    case INDEX_op_x86_adc_ls_jcc_capture_rawflags:
         {
             const TCGOutOpX86AdcJccCaptureRaw *out =
                 container_of(all_outop[op->opc],

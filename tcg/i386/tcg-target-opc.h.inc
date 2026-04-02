@@ -46,9 +46,17 @@ DEF(x86_add_brcond_capture_rawflags, 0, 2, 3,
     TCG_OPF_BB_END | TCG_OPF_COND_BRANCH | TCG_OPF_INT)
 DEF(x86_add_jcc_capture_rawflags, 0, 2, 3,
     TCG_OPF_BB_END | TCG_OPF_COND_BRANCH | TCG_OPF_INT)
+DEF(x86_add_hi_jcc_capture_rawflags, 0, 2, 3,
+    TCG_OPF_BB_END | TCG_OPF_COND_BRANCH | TCG_OPF_INT)
+DEF(x86_add_ls_jcc_capture_rawflags, 0, 2, 3,
+    TCG_OPF_BB_END | TCG_OPF_COND_BRANCH | TCG_OPF_INT)
 DEF(x86_adc_brcond_capture_rawflags, 0, 3, 3,
     TCG_OPF_BB_END | TCG_OPF_COND_BRANCH | TCG_OPF_INT)
 DEF(x86_adc_jcc_capture_rawflags, 0, 3, 3,
+    TCG_OPF_BB_END | TCG_OPF_COND_BRANCH | TCG_OPF_INT)
+DEF(x86_adc_hi_jcc_capture_rawflags, 0, 3, 3,
+    TCG_OPF_BB_END | TCG_OPF_COND_BRANCH | TCG_OPF_INT)
+DEF(x86_adc_ls_jcc_capture_rawflags, 0, 3, 3,
     TCG_OPF_BB_END | TCG_OPF_COND_BRANCH | TCG_OPF_INT)
 DEF(x86_and_capture_rawflags, 2, 2, 0,
     TCG_OPF_SIDE_EFFECTS | TCG_OPF_INT)

@@ -216,14 +216,24 @@ assert_direct_positive "cmp gap8" cmp_gap8_producer cmp_gap8_branch 9
 assert_direct_positive "cmn gap1" cmn_gap1_producer cmn_gap1_branch 2
 assert_direct_positive "adds gap4" adds_gap4_producer adds_gap4_branch 5
 assert_direct_positive "cmn gap8" cmn_gap8_producer cmn_gap8_branch 9
+assert_direct_positive "cmn cs gap1" cmn_cs_gap1_producer cmn_cs_gap1_branch 2
+assert_direct_positive "adds cc gap1" adds_cc_gap1_producer adds_cc_gap1_branch 2
+assert_direct_positive "cmn hi gap4" cmn_hi_gap4_producer cmn_hi_gap4_branch 5
+assert_direct_positive "adds ls gap4" adds_ls_gap4_producer adds_ls_gap4_branch 5
 assert_direct_positive "cmn vs gap1" cmn_vs_gap1_producer cmn_vs_gap1_branch 2
 assert_direct_positive "adds vc gap4" adds_vc_gap4_producer adds_vc_gap4_branch 5
 assert_direct_positive "cmn mi gap4" cmn_mi_gap4_producer cmn_mi_gap4_branch 5
 assert_direct_positive "adds pl gap1" adds_pl_gap1_producer adds_pl_gap1_branch 2
+assert_direct_positive "adcs cs gap1" adcs_cs_gap1_producer adcs_cs_gap1_branch 2
+assert_direct_positive "adcs cc gap1" adcs_cc_gap1_producer adcs_cc_gap1_branch 2
+assert_direct_positive "adcs hi gap4" adcs_hi_gap4_producer adcs_hi_gap4_branch 5
+assert_direct_positive "adcs ls gap4" adcs_ls_gap4_producer adcs_ls_gap4_branch 5
 assert_direct_positive "adcs eq gap1" adcs_eq_gap1_producer adcs_eq_gap1_branch 2
 assert_direct_positive "adcs vs gap4" adcs_vs_gap4_producer adcs_vs_gap4_branch 5
 assert_direct_positive "adcs rd eq gap1" adcs_rd_eq_gap1_producer adcs_rd_eq_gap1_branch 2
+assert_direct_positive "adcs rd cs gap1" adcs_rd_cs_gap1_producer adcs_rd_cs_gap1_branch 2
 assert_direct_positive "adcs rd vs gap4" adcs_rd_vs_gap4_producer adcs_rd_vs_gap4_branch 5
+assert_direct_positive "adcs rd hi gap4" adcs_rd_hi_gap4_producer adcs_rd_hi_gap4_branch 5
 assert_direct_positive "sbcs rd cs gap1" sbcs_rd_cs_gap1_producer sbcs_rd_cs_gap1_branch 2
 assert_direct_positive "sbcs rd mi gap4" sbcs_rd_mi_gap4_producer sbcs_rd_mi_gap4_branch 5
 assert_direct_positive "adcs32 rd eq gap1" adcs32_rd_eq_gap1_producer adcs32_rd_eq_gap1_branch 2

@@ -30,14 +30,24 @@ _start:
     bl      cmn_gap1_case
     bl      adds_gap4_case
     bl      cmn_gap8_case
+    bl      cmn_cs_gap1_case
+    bl      adds_cc_gap1_case
+    bl      cmn_hi_gap4_case
+    bl      adds_ls_gap4_case
     bl      cmn_vs_gap1_case
     bl      adds_vc_gap4_case
     bl      cmn_mi_gap4_case
     bl      adds_pl_gap1_case
+    bl      adcs_cs_gap1_case
+    bl      adcs_cc_gap1_case
+    bl      adcs_hi_gap4_case
+    bl      adcs_ls_gap4_case
     bl      adcs_eq_gap1_case
     bl      adcs_vs_gap4_case
     bl      adcs_rd_eq_gap1_case
+    bl      adcs_rd_cs_gap1_case
     bl      adcs_rd_vs_gap4_case
+    bl      adcs_rd_hi_gap4_case
     bl      sbcs_rd_cs_gap1_case
     bl      sbcs_rd_mi_gap4_case
     bl      adcs32_rd_eq_gap1_case
@@ -131,6 +141,54 @@ cmn_gap8_branch:
 cmn_gap8_taken:
     ret
 
+cmn_cs_gap1_case:
+    mov     x0, #-1
+    mov     x1, #1
+cmn_cs_gap1_producer:
+    cmn     x0, x1
+    safe_gap_1
+cmn_cs_gap1_branch:
+    b.cs    cmn_cs_gap1_taken
+    b       fail
+cmn_cs_gap1_taken:
+    ret
+
+adds_cc_gap1_case:
+    mov     x0, #1
+    mov     x1, #1
+adds_cc_gap1_producer:
+    adds    xzr, x0, x1
+    safe_gap_1
+adds_cc_gap1_branch:
+    b.cc    adds_cc_gap1_taken
+    b       fail
+adds_cc_gap1_taken:
+    ret
+
+cmn_hi_gap4_case:
+    mov     x0, #-1
+    mov     x1, #2
+cmn_hi_gap4_producer:
+    cmn     x0, x1
+    safe_gap_4
+cmn_hi_gap4_branch:
+    b.hi    cmn_hi_gap4_taken
+    b       fail
+cmn_hi_gap4_taken:
+    ret
+
+adds_ls_gap4_case:
+    mov     x0, #1
+    mov     x1, #1
+adds_ls_gap4_producer:
+    adds    xzr, x0, x1
+    safe_gap_4
+adds_ls_gap4_branch:
+    b.ls    adds_ls_gap4_taken
+    b       fail
+adds_ls_gap4_taken:
+    ret
+
 cmn_vs_gap1_case:
     mov     x0, #1
     lsl     x0, x0, #63
@@ -181,6 +239,62 @@ adds_pl_gap1_branch:
 adds_pl_gap1_taken:
     ret
 
+adcs_cs_gap1_case:
+    mov     x15, #5
+    cmp     x15, #3
+    movn    x1, #0
+    mov     x2, #1
+adcs_cs_gap1_producer:
+    adcs    xzr, x1, x2
+    safe_gap_1
+adcs_cs_gap1_branch:
+    b.cs    adcs_cs_gap1_taken
+    b       fail
+adcs_cs_gap1_taken:
+    ret
+
+adcs_cc_gap1_case:
+    mov     x15, #1
+    cmp     x15, #3
+    mov     x1, #1
+    mov     x2, #1
+adcs_cc_gap1_producer:
+    adcs    xzr, x1, x2
+    safe_gap_1
+adcs_cc_gap1_branch:
+    b.cc    adcs_cc_gap1_taken
+    b       fail
+adcs_cc_gap1_taken:
+    ret
+
+adcs_hi_gap4_case:
+    mov     x15, #5
+    cmp     x15, #3
+    movn    x1, #0
+    mov     x2, #1
+adcs_hi_gap4_producer:
+    adcs    xzr, x1, x2
+    safe_gap_4
+adcs_hi_gap4_branch:
+    b.hi    adcs_hi_gap4_taken
+    b       fail
+adcs_hi_gap4_taken:
+    ret
+
+adcs_ls_gap4_case:
+    mov     x15, #1
+    cmp     x15, #3
+    mov     x1, #1
+    mov     x2, #1
+adcs_ls_gap4_producer:
+    adcs    xzr, x1, x2
+    safe_gap_4
+adcs_ls_gap4_branch:
+    b.ls    adcs_ls_gap4_taken
+    b       fail
+adcs_ls_gap4_taken:
+    ret
+
 adcs_eq_gap1_case:
     mov     x15, #5
     cmp     x15, #3
@@ -225,6 +339,20 @@ adcs_rd_eq_gap1_branch:
 adcs_rd_eq_gap1_taken:
     ret
 
+adcs_rd_cs_gap1_case:
+    mov     x15, #5
+    cmp     x15, #3
+    movn    x1, #0
+    mov     x2, #1
+adcs_rd_cs_gap1_producer:
+    adcs    x3, x1, x2
+    safe_gap_1
+adcs_rd_cs_gap1_branch:
+    b.cs    adcs_rd_cs_gap1_taken
+    b       fail
+adcs_rd_cs_gap1_taken:
+    ret
+
 adcs_rd_vs_gap4_case:
     mov     x15, #5
     cmp     x15, #3
@@ -239,6 +367,20 @@ adcs_rd_vs_gap4_branch:
     b.vs    adcs_rd_vs_gap4_taken
     b       fail
 adcs_rd_vs_gap4_taken:
+    ret
+
+adcs_rd_hi_gap4_case:
+    mov     x15, #5
+    cmp     x15, #3
+    movn    x1, #0
+    mov     x2, #1
+adcs_rd_hi_gap4_producer:
+    adcs    x3, x1, x2
+    safe_gap_4
+adcs_rd_hi_gap4_branch:
+    b.hi    adcs_rd_hi_gap4_taken
+    b       fail
+adcs_rd_hi_gap4_taken:
     ret
 
 sbcs_rd_cs_gap1_case:
