@@ -72,6 +72,116 @@ cmp-bcond-ext-host-direct: LDFLAGS += -nostdlib
 run-cmp-bcond-ext-host-direct-codegen: cmp-bcond-ext-host-direct
 	$(call run-test,$@,$(AARCH64_SRC)/check-cmp-bcond-ext-host-direct.sh "$(QEMU)" $<)
 
+AARCH64_TESTS += cmp-bcond-gap-host-direct
+cmp-bcond-gap-host-direct: LDFLAGS += -nostdlib
+run-cmp-bcond-gap-host-direct-codegen: cmp-bcond-gap-host-direct
+	$(call run-test,$@,$(AARCH64_SRC)/check-cmp-bcond-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += cmp-csel-gap-host-direct
+cmp-csel-gap-host-direct: LDFLAGS += -nostdlib
+run-cmp-csel-gap-host-direct-codegen: cmp-csel-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-cmp-csel-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += cmp-ccmp-gap-host-direct
+cmp-ccmp-gap-host-direct: LDFLAGS += -nostdlib
+run-cmp-ccmp-gap-host-direct-codegen: cmp-ccmp-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-cmp-ccmp-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += cmp-fcsel-gap-host-direct
+cmp-fcsel-gap-host-direct: LDFLAGS += -nostdlib
+run-cmp-fcsel-gap-host-direct-codegen: cmp-fcsel-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-cmp-fcsel-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += cmp-fccmp-gap-host-direct
+cmp-fccmp-gap-host-direct: LDFLAGS += -nostdlib
+run-cmp-fccmp-gap-host-direct-codegen: cmp-fccmp-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-cmp-fccmp-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += logic-csel-ccmp-gap-host-direct
+logic-csel-ccmp-gap-host-direct: LDFLAGS += -nostdlib
+run-logic-csel-ccmp-gap-host-direct-codegen: logic-csel-ccmp-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-logic-csel-ccmp-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += subs-rd-csel-gap-host-direct
+subs-rd-csel-gap-host-direct: LDFLAGS += -nostdlib
+run-subs-rd-csel-gap-host-direct-codegen: subs-rd-csel-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-subs-rd-csel-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += adds-rd-csel-gap-host-direct
+adds-rd-csel-gap-host-direct: LDFLAGS += -nostdlib
+run-adds-rd-csel-gap-host-direct-codegen: adds-rd-csel-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-adds-rd-csel-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += subs-rd-ccmp-gap-host-direct
+subs-rd-ccmp-gap-host-direct: LDFLAGS += -nostdlib
+run-subs-rd-ccmp-gap-host-direct-codegen: subs-rd-ccmp-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-subs-rd-ccmp-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += adds-rd-ccmp-gap-host-direct
+adds-rd-ccmp-gap-host-direct: LDFLAGS += -nostdlib
+run-adds-rd-ccmp-gap-host-direct-codegen: adds-rd-ccmp-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-adds-rd-ccmp-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += subs-rd-fcsel-gap-host-direct
+subs-rd-fcsel-gap-host-direct: LDFLAGS += -nostdlib
+run-subs-rd-fcsel-gap-host-direct-codegen: subs-rd-fcsel-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-subs-rd-fcsel-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += adds-rd-fcsel-gap-host-direct
+adds-rd-fcsel-gap-host-direct: LDFLAGS += -nostdlib
+run-adds-rd-fcsel-gap-host-direct-codegen: adds-rd-fcsel-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-adds-rd-fcsel-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += subs-rd-fccmp-gap-host-direct
+subs-rd-fccmp-gap-host-direct: LDFLAGS += -nostdlib
+run-subs-rd-fccmp-gap-host-direct-codegen: subs-rd-fccmp-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-subs-rd-fccmp-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += adds-rd-fccmp-gap-host-direct
+adds-rd-fccmp-gap-host-direct: LDFLAGS += -nostdlib
+run-adds-rd-fccmp-gap-host-direct-codegen: adds-rd-fccmp-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-adds-rd-fccmp-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += adcs-rd-csel-gap-host-direct
+adcs-rd-csel-gap-host-direct: LDFLAGS += -nostdlib
+run-adcs-rd-csel-gap-host-direct-codegen: adcs-rd-csel-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-adcs-rd-csel-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += sbcs-rd-csel-gap-host-direct
+sbcs-rd-csel-gap-host-direct: LDFLAGS += -nostdlib
+run-sbcs-rd-csel-gap-host-direct-codegen: sbcs-rd-csel-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-sbcs-rd-csel-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += adcs-rd-ccmp-gap-host-direct
+adcs-rd-ccmp-gap-host-direct: LDFLAGS += -nostdlib
+run-adcs-rd-ccmp-gap-host-direct-codegen: adcs-rd-ccmp-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-adcs-rd-ccmp-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += sbcs-rd-ccmp-gap-host-direct
+sbcs-rd-ccmp-gap-host-direct: LDFLAGS += -nostdlib
+run-sbcs-rd-ccmp-gap-host-direct-codegen: sbcs-rd-ccmp-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-sbcs-rd-ccmp-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += adcs-rd-fcsel-gap-host-direct
+adcs-rd-fcsel-gap-host-direct: LDFLAGS += -nostdlib
+run-adcs-rd-fcsel-gap-host-direct-codegen: adcs-rd-fcsel-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-adcs-rd-fcsel-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += sbcs-rd-fcsel-gap-host-direct
+sbcs-rd-fcsel-gap-host-direct: LDFLAGS += -nostdlib
+run-sbcs-rd-fcsel-gap-host-direct-codegen: sbcs-rd-fcsel-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-sbcs-rd-fcsel-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += adcs-rd-fccmp-gap-host-direct
+adcs-rd-fccmp-gap-host-direct: LDFLAGS += -nostdlib
+run-adcs-rd-fccmp-gap-host-direct-codegen: adcs-rd-fccmp-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-adcs-rd-fccmp-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += sbcs-rd-fccmp-gap-host-direct
+sbcs-rd-fccmp-gap-host-direct: LDFLAGS += -nostdlib
+run-sbcs-rd-fccmp-gap-host-direct-codegen: sbcs-rd-fccmp-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-sbcs-rd-fccmp-gap-host-direct.sh "$(QEMU)" $<)
+
 # Pauth Tests
 ifneq ($(CROSS_CC_HAS_ARMV8_3),)
 AARCH64_TESTS += pauth-1 pauth-2 pauth-4 pauth-5 test-2375
