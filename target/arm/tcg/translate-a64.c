@@ -8608,6 +8608,13 @@ static bool do_addsub_imm(DisasContext *s, arg_rri_sf *a,
         materialized_adc_add = a64_find_adjacent_plain_adc(s, true);
     }
 
+    /*
+     * Current SPEC closure shows compare-like -> CSEL/CS* still has a
+     * correctness hole. Keep this family on the fallback path until the
+     * pending-compare peek lifetime is fixed.
+     */
+    lazy_condsel_cmp = false;
+
     if (!setflags) {
         tcg_rd = cpu_reg_sp(s, a->rd);
     } else if (!lazy_bcond_cmp && !lazy_condsel_cmp && !lazy_ccmp_cmp &&
@@ -12776,6 +12783,13 @@ static bool do_addsub_ext(DisasContext *s, arg_addsub_ext *a,
         materialized_adc_add = a64_find_adjacent_plain_adc(s, true);
     }
 
+    /*
+     * Current SPEC closure shows compare-like -> CSEL/CS* still has a
+     * correctness hole. Keep this family on the fallback path until the
+     * pending-compare peek lifetime is fixed.
+     */
+    lazy_condsel_cmp = false;
+
     /* non-flag setting ops may use SP */
     if (!setflags) {
         tcg_rd = cpu_reg_sp(s, a->rd);
@@ -13021,6 +13035,13 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
             materialized_adc_add = a64_find_adjacent_plain_adc(s, true);
         }
     }
+
+    /*
+     * Current SPEC closure shows compare-like -> CSEL/CS* still has a
+     * correctness hole. Keep this family on the fallback path until the
+     * pending-compare peek lifetime is fixed.
+     */
+    lazy_condsel_cmp = false;
 
     if (!setflags || (!lazy_bcond_cmp && !lazy_condsel_cmp &&
                       !lazy_fcsel_cmp && !lazy_fccmp_cmp &&

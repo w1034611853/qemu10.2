@@ -111,6 +111,25 @@ Important adjacency note:
 - attempts to restore old rewind bookkeeping reopened:
   - `temp_load: code should not be reached`
 
+### 3. Compare-like non-branch status on main branch
+
+Current merged main-branch status is intentionally narrower than the peak
+feature worktree state:
+
+- compare-like `CCMP/CCMN`: enabled
+- compare-like `FCSEL`: enabled
+- compare-like `FCCMP`: enabled
+- compare-like `CSEL/CSINC/CSINV/CSNEG/CSET/CSETM`: temporarily forced back to
+  fallback
+
+Reason:
+
+- SPEC `531.deepsjeng_r test` bisects to the add-side / compare-like rollout
+- current closure shows a live correctness issue when compare-like
+  `CSEL/CS*` pending-peek is enabled
+- disabling just compare-like `CSEL/CS*` restores `531` without backing out the
+  rest of the compare-like non-branch family
+
 ## Latest Worktree Commits
 
 Recent branch tip history:

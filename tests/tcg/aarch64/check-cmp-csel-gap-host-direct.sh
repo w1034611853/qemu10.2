@@ -53,74 +53,35 @@ sym_addr()
     ' "$nm_log" || die "failed to resolve symbol $sym in $exe"
 }
 
-assert_record()
+assert_no_direct()
 {
     local label=$1
     local producer_sym=$2
     local producer_addr
 
     producer_addr=$(sym_addr "$producer_sym")
-    rg -q "A64 cmp-pending record pc=0x${producer_addr}\\b" "$log" \
-        || die "expected cmp-pending record for $label"
-}
-
-assert_peek()
-{
-    local label=$1
-    local producer_sym=$2
-    local consumer_sym=$3
-    local age=$4
-    local producer_addr
-    local consumer_addr
-
-    producer_addr=$(sym_addr "$producer_sym")
-    consumer_addr=$(sym_addr "$consumer_sym")
-    rg -q "A64 cmp-pending peek producer_pc=0x${producer_addr} consumer_pc=0x${consumer_addr} age=${age} via=CSEL-pending" \
-        "$log" || die "expected cmp-pending peek for $label"
-}
-
-assert_no_use()
-{
-    local label=$1
-    local producer_sym=$2
-    local producer_addr
-
-    producer_addr=$(sym_addr "$producer_sym")
+    if rg -q "A64 cmp-pending record pc=0x${producer_addr}\\b" "$log"; then
+        die "unexpected cmp-pending record for $label"
+    fi
 
     if rg -q "A64 cmp-pending (use|peek) producer_pc=0x${producer_addr}\\b" "$log"; then
-        die "unexpected cmp-pending use for $label"
+        die "unexpected cmp-pending direct consume for $label"
     fi
 }
 
-assert_positive()
-{
-    local label=$1
-    local producer_sym=$2
-    local consumer_sym=$3
-    local age=$4
+assert_no_direct "cmp csel eq gap1" cmp_csel_eq_gap1_producer
+assert_no_direct "cmp csel lt gap4" cmp_csel_lt_gap4_producer
+assert_no_direct "cmp csel hi gap8" cmp_csel_hi_gap8_producer
+assert_no_direct "cmp csinc eq gap1" cmp_csinc_eq_gap1_producer
+assert_no_direct "cmp csinv eq gap4" cmp_csinv_eq_gap4_producer
+assert_no_direct "cmp csneg eq gap8" cmp_csneg_eq_gap8_producer
+assert_no_direct "cmp cset eq gap1" cmp_cset_eq_gap1_producer
+assert_no_direct "cmp csetm hi gap4" cmp_csetm_hi_gap4_producer
+assert_no_direct "cmp csel bad gap" cmp_csel_bad_gap_producer
 
-    assert_record "$label" "$producer_sym"
-    assert_peek "$label" "$producer_sym" "$consumer_sym" "$age"
-}
-
-assert_positive "cmp csel eq gap1" \
-    cmp_csel_eq_gap1_producer cmp_csel_eq_gap1_consumer 2
-assert_positive "cmp csel lt gap4" \
-    cmp_csel_lt_gap4_producer cmp_csel_lt_gap4_consumer 5
-assert_positive "cmp csel hi gap8" \
-    cmp_csel_hi_gap8_producer cmp_csel_hi_gap8_consumer 9
-assert_positive "cmp csinc eq gap1" \
-    cmp_csinc_eq_gap1_producer cmp_csinc_eq_gap1_consumer 2
-assert_positive "cmp csinv eq gap4" \
-    cmp_csinv_eq_gap4_producer cmp_csinv_eq_gap4_consumer 5
-assert_positive "cmp csneg eq gap8" \
-    cmp_csneg_eq_gap8_producer cmp_csneg_eq_gap8_consumer 9
-assert_positive "cmp cset eq gap1" \
-    cmp_cset_eq_gap1_producer cmp_cset_eq_gap1_consumer 2
-assert_positive "cmp csetm hi gap4" \
-    cmp_csetm_hi_gap4_producer cmp_csetm_hi_gap4_consumer 5
-
-assert_no_use "cmp csel bad gap" cmp_csel_bad_gap_producer
+if rg -q "via=CSEL-pending" "$log"; then
+    die "unexpected compare-like CSEL pending-peek path still active"
+fi
 
 rg -q 'A64 cmp-pending summary tb_pc=0x' "$log" \
     || die "expected at least one cmp-pending summary marker"
