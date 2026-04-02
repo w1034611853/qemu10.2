@@ -7,6 +7,16 @@ From this point on, new progress updates should land here first. Older handoff,
 matrix, and plan files remain useful as historical references, but this file is
 the main running summary.
 
+Archive-only historical notes now live under `docs/superpowers/archive/`:
+
+- `docs/superpowers/archive/codex_a64_x86_status4_handoff.md`
+- `docs/superpowers/archive/handoff.md`
+- `docs/superpowers/archive/2026-04-01-direct-path-candidate-matrix.md`
+- `docs/superpowers/archive/2026-03-31-adcs-sbcs-direct-consumer-fix-plan.md`
+- `docs/superpowers/archive/2026-03-31-adcs-sbcs-direct-consumer-implementation.md`
+- `docs/superpowers/archive/2026-04-01-adcs-sbcs-producer-direct-consumer.md`
+- `docs/superpowers/archive/2026-04-01-lazy-compare-phase-2-bcond.md`
+
 ## Scope
 
 Project focus:
@@ -22,7 +32,10 @@ Main workspace:
 
 - repo: `/home/wangruoyu/qemu10.2`
 - branch: `a64-x86-status4-v10.2.0`
-- current main `HEAD`: `ffcf55b840` (`chore: ignore project-local worktrees`)
+- current main `HEAD`:
+  `3150e645b6` (`Merge branch 'adcs-sbcs-producer-direct-v10.2.0' into a64-x86-status4-v10.2.0`)
+
+Main branch now includes the feature worktree line through the merge above.
 
 Active isolated worktree:
 
@@ -74,7 +87,7 @@ Current worktree support now includes:
 
 Current condition coverage on the add side includes:
 
-- `EQ/NE/CS/CC/HI/LS/GE/LT/GT/LE`
+- `EQ/NE/GE/LT/GT/LE`
 - `MI/PL/VS/VC`
 
 Current materialized carry-producer scope:
@@ -692,13 +705,13 @@ Fresh evidence for this slice:
 The following files are still useful references, but this file replaces them as
 the main day-to-day progress tracker:
 
-- [handoff.md](/home/wangruoyu/qemu10.2/handoff.md)
-- [codex_a64_x86_status4_handoff.md](/home/wangruoyu/qemu10.2/codex_a64_x86_status4_handoff.md)
-- [2026-04-01-direct-path-candidate-matrix.md](/home/wangruoyu/qemu10.2/docs/superpowers/summaries/2026-04-01-direct-path-candidate-matrix.md)
+- [handoff.md](/home/wangruoyu/qemu10.2/docs/superpowers/archive/handoff.md)
+- [codex_a64_x86_status4_handoff.md](/home/wangruoyu/qemu10.2/docs/superpowers/archive/codex_a64_x86_status4_handoff.md)
+- [2026-04-01-direct-path-candidate-matrix.md](/home/wangruoyu/qemu10.2/docs/superpowers/archive/2026-04-01-direct-path-candidate-matrix.md)
 - [2026-04-02-perlbench-test-workload-qemu-wrapper-workaround.md](/home/wangruoyu/qemu10.2/docs/superpowers/summaries/2026-04-02-perlbench-test-workload-qemu-wrapper-workaround.md)
 - [2026-04-02-spec-cpu2017-seven-test-size-runbook.md](/home/wangruoyu/qemu10.2/docs/superpowers/summaries/2026-04-02-spec-cpu2017-seven-test-size-runbook.md)
 - [2026-04-02-worktree-closure-and-merge-strategy.md](/home/wangruoyu/qemu10.2/docs/superpowers/summaries/2026-04-02-worktree-closure-and-merge-strategy.md)
-- [2026-04-01-lazy-compare-phase-2-bcond.md](/home/wangruoyu/qemu10.2/docs/superpowers/plans/2026-04-01-lazy-compare-phase-2-bcond.md)
+- [2026-04-01-lazy-compare-phase-2-bcond.md](/home/wangruoyu/qemu10.2/docs/superpowers/archive/2026-04-01-lazy-compare-phase-2-bcond.md)
 - [2026-04-01-lazy-compare-phase-2-design.md](/home/wangruoyu/qemu10.2/docs/superpowers/specs/2026-04-01-lazy-compare-phase-2-design.md)
 
 ## Current Coding Starting Point

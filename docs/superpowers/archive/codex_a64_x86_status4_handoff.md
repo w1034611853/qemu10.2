@@ -1,3 +1,6 @@
+> Archive: historical handoff snapshot kept for reference. Current branch
+> status and feature coverage now live in `progress.md`.
+
 # ADCS/SBCS Direct Consumer - Handoff
 
 ## Repo / Branch
@@ -124,3 +127,79 @@ If you want to continue immediate feature work instead of design work, the most
 reasonable user-selected kickoff target is:
 
 - `ADDS/SUBS/ADCS/SBCS -> B.cond`
+
+## Post-Closure Progress Update
+
+After the `ADCS/SBCS` closure, the active isolated worktree moved the
+structural line forward as well:
+
+- worktree branch:
+  - `adcs-sbcs-producer-direct-v10.2.0`
+- current worktree tip:
+  - `996e400881` `aarch64: chain SBCS rd into lazy B.cond`
+
+### What is now implemented in that worktree
+
+- `lazy compare phase 2 B.cond` first rollout
+  - `CMP/SUBS xzr -> B.cond` bounded-gap support
+  - `CMN/ADDS xzr -> B.cond` bounded-gap support
+  - same bound as designed: `A64_CMP_PENDING_GAP_MAX == 8`
+  - same whitelist discipline as designed
+
+Current add-side scope is intentionally narrower than the whole condition set:
+
+- direct add-side branch coverage now includes:
+  - `EQ/NE/CS/CC/HI/LS/GE/LT/GT/LE`
+  - `MI/PL/VS/VC`
+- compare-like carry-add producer coverage now also includes:
+  - `ADCS xzr -> B.cond`
+- materialized carry-producer branch coverage now also includes:
+  - `ADCS rd -> B.cond`
+  - `SBCS rd -> B.cond`
+  - current rollout is intentionally limited to non-adjacent gap cases
+
+### Important scope note
+
+The current adjacent precedence case is kept as a stable direct `age=1`
+bounded-path consume, not as an explicit `rewind`-counted path.
+
+Reason:
+
+- attempts to restore the older rewind bookkeeping reopened the prior
+  `temp_load: code should not be reached` runtime abort
+- the stable implementation therefore favors correct direct lowering and green
+  regression coverage over exact rewind-trace parity
+
+### Focused verification that is green on the worktree tip
+
+```bash
+ninja -C build qemu-aarch64
+tests/tcg/aarch64/check-cmp-bcond-gap-host-direct.sh \
+    ./build/qemu-aarch64 \
+    build/tests/tcg/aarch64-linux-user/cmp-bcond-gap-host-direct
+./build/qemu-aarch64 -cpu max \
+    build/tests/tcg/aarch64-linux-user/cmp-bcond-gap-host-direct
+./build/qemu-aarch64 -cpu max \
+    build/tests/tcg/aarch64-linux-user/nzcv-status4
+tests/tcg/aarch64/check-adc-sbc-host-direct.sh \
+    ./build/qemu-aarch64 \
+    build/tests/tcg/aarch64-linux-user/adc-sbc-host-direct
+tests/tcg/aarch64/check-cmp-bcond-ext-host-direct.sh \
+    ./build/qemu-aarch64 \
+    build/tests/tcg/aarch64-linux-user/cmp-bcond-ext-host-direct
+```
+
+Observed result:
+
+- `check-cmp-bcond-gap-host-direct.sh`: PASS
+- `cmp-bcond-gap-host-direct`: exit code `0`
+- `nzcv-status4`: `PASS`
+- `check-adc-sbc-host-direct.sh`: PASS
+- `check-cmp-bcond-ext-host-direct.sh`: PASS
+
+### Best next extensions from here
+
+1. Extend materialized carry-producer coverage further
+   - 32-bit `ADCS/SBCS rd -> B.cond`
+2. Reuse bounded lazy compare for non-branch consumers
+   - `CSEL/CCMP/CS*`
