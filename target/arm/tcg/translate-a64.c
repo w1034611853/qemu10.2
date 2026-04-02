@@ -1801,6 +1801,9 @@ static bool a64_try_set_cmp_cond_bool_i32(DisasContext *s, int cc, TCGv_i32 dst)
 
     if (!s->a64_pending_cc.valid ||
         s->a64_pending_cc.kind == A64_PENDING_CC_MATERIALIZED_ADD ||
+        (s->a64_pending_cc.kind == A64_PENDING_CC_MATERIALIZED_SUB &&
+         (s->a64_pending_cc.cc_op == A64_X86_CC_SBC64 ||
+          s->a64_pending_cc.cc_op == A64_X86_CC_SBC32)) ||
         a64_pending_cc_has_live_split_flags(s) ||
         !a64_cmp_cond_to_tcg(&cond, cc)) {
         return false;
@@ -1833,6 +1836,9 @@ static bool a64_try_peek_cmp_cond_bool_i32(DisasContext *s, int cc,
 
     if (!s->a64_pending_cc.valid ||
         s->a64_pending_cc.kind == A64_PENDING_CC_MATERIALIZED_ADD ||
+        (s->a64_pending_cc.kind == A64_PENDING_CC_MATERIALIZED_SUB &&
+         (s->a64_pending_cc.cc_op == A64_X86_CC_SBC64 ||
+          s->a64_pending_cc.cc_op == A64_X86_CC_SBC32)) ||
         a64_pending_cc_has_live_split_flags(s) ||
         !a64_cmp_cond_to_tcg(&cond, cc)) {
         return false;
@@ -12923,6 +12929,8 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
     bool lazy_bcond_cmp = false;
     bool materialized_condsel_carry = false;
     bool materialized_condsel_sub = false;
+    bool materialized_ccmp_carry = false;
+    bool materialized_ccmp_sub = false;
     bool materialized_bcond_carry = false;
     bool materialized_bcond_sub = false;
     bool materialized_sbc_sbc = false;
@@ -12931,6 +12939,8 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
     uint8_t gap_insns = 0;
     uint8_t condsel_gap_insns = 0;
     uint8_t condsel_sub_gap_insns = 0;
+    uint8_t ccmp_gap_insns = 0;
+    uint8_t ccmp_sub_gap_insns = 0;
     int future_bcond_cc = -1;
 
     if (setflags && is_sub && a->rd == 31) {
@@ -12940,6 +12950,13 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
             a64_find_future_condsel_gap_add(s, &condsel_sub_gap_insns, NULL);
         if (materialized_condsel_sub && condsel_sub_gap_insns == 0) {
             materialized_condsel_sub = false;
+        }
+        if (!materialized_condsel_sub) {
+            materialized_ccmp_sub =
+                a64_find_future_ccmp_gap(s, &ccmp_sub_gap_insns, NULL);
+            if (materialized_ccmp_sub && ccmp_sub_gap_insns == 0) {
+                materialized_ccmp_sub = false;
+            }
         }
         materialized_bcond_sub =
             a64_find_future_bcond_gap(s, &gap_insns, NULL);
@@ -12959,6 +12976,13 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
         if (materialized_condsel_carry && condsel_gap_insns == 0) {
             materialized_condsel_carry = false;
         }
+        if (!materialized_condsel_carry) {
+            materialized_ccmp_carry =
+                a64_find_future_ccmp_gap(s, &ccmp_gap_insns, NULL);
+            if (materialized_ccmp_carry && ccmp_gap_insns == 0) {
+                materialized_ccmp_carry = false;
+            }
+        }
         materialized_bcond_carry =
             a64_find_future_bcond_gap(s, &gap_insns, &future_bcond_cc);
         if (materialized_bcond_carry && gap_insns == 0) {
@@ -12970,10 +12994,11 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
         }
     }
     if (setflags && a->rd != 31) {
-        if (is_sub && !materialized_condsel_sub) {
+        if (is_sub && !materialized_condsel_sub && !materialized_ccmp_sub) {
             materialized_sbc_sbc =
                 a64_find_adjacent_plain_sbc_sub_same_width(s, a->sf);
-        } else if (!materialized_condsel_carry) {
+        } else if (!is_sub &&
+                   !materialized_condsel_carry && !materialized_ccmp_carry) {
             materialized_adc_adc =
                 a64_find_adjacent_plain_adc_same_width(s, a->sf);
         }
@@ -13048,6 +13073,7 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
     }
 
     if (materialized_condsel_carry || materialized_condsel_sub ||
+        materialized_ccmp_carry || materialized_ccmp_sub ||
         materialized_adc_adc ||
         materialized_sbc_sbc) {
         A64PendingCCProducerKind kind;
@@ -13065,7 +13091,10 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
                                  NULL, tcg_last_op(),
                                  cc_op,
                                  materialized_condsel_carry ? condsel_gap_insns :
-                                 materialized_condsel_sub ? condsel_sub_gap_insns : 0);
+                                 materialized_condsel_sub ? condsel_sub_gap_insns :
+                                 materialized_ccmp_carry ? ccmp_gap_insns :
+                                 materialized_ccmp_sub ? ccmp_sub_gap_insns :
+                                 0);
         s->a64_pending_cc.kind = kind;
     } else if (materialized_bcond_carry) {
         a64_record_cmp_for_bcond(s, a->sf, tcg_rn, tcg_rm,

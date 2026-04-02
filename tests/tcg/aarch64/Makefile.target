@@ -152,6 +152,16 @@ sbcs-rd-csel-gap-host-direct: LDFLAGS += -nostdlib
 run-sbcs-rd-csel-gap-host-direct-codegen: sbcs-rd-csel-gap-host-direct
 	$(call run-test,$@,bash $(AARCH64_SRC)/check-sbcs-rd-csel-gap-host-direct.sh "$(QEMU)" $<)
 
+AARCH64_TESTS += adcs-rd-ccmp-gap-host-direct
+adcs-rd-ccmp-gap-host-direct: LDFLAGS += -nostdlib
+run-adcs-rd-ccmp-gap-host-direct-codegen: adcs-rd-ccmp-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-adcs-rd-ccmp-gap-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += sbcs-rd-ccmp-gap-host-direct
+sbcs-rd-ccmp-gap-host-direct: LDFLAGS += -nostdlib
+run-sbcs-rd-ccmp-gap-host-direct-codegen: sbcs-rd-ccmp-gap-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-sbcs-rd-ccmp-gap-host-direct.sh "$(QEMU)" $<)
+
 # Pauth Tests
 ifneq ($(CROSS_CC_HAS_ARMV8_3),)
 AARCH64_TESTS += pauth-1 pauth-2 pauth-4 pauth-5 test-2375
