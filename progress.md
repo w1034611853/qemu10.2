@@ -33,9 +33,16 @@ Main workspace:
 - repo: `/home/wangruoyu/qemu10.2`
 - branch: `a64-x86-status4-v10.2.0`
 - current main `HEAD`:
-  `3150e645b6` (`Merge branch 'adcs-sbcs-producer-direct-v10.2.0' into a64-x86-status4-v10.2.0`)
+  `2fb8ccb1c4` (`Merge branch 'compare-like-csel-cs-rework-v10.2.0' into a64-x86-status4-v10.2.0`)
 
-Main branch now includes the feature worktree line through the merge above.
+Main branch now includes:
+
+- the earlier `adcs-sbcs-producer-direct-v10.2.0` merge
+- the compare-like `CSEL/CS*` rework merge
+
+Latest merged fix commit under that merge:
+
+- `47d27a1bb1` `aarch64: rework compare-like CSEL pending retirement`
 
 Active isolated worktree:
 
@@ -113,24 +120,38 @@ Important adjacency note:
 
 ### 3. Compare-like non-branch status on main branch
 
-Current merged main-branch status is intentionally narrower than the peak
-feature worktree state:
+Compare-like non-branch support is now restored on main branch, including the
+previously disabled `CSEL/CS*` family:
 
+- compare-like `CSEL/CSINC/CSINV/CSNEG/CSET/CSETM`: enabled
 - compare-like `CCMP/CCMN`: enabled
 - compare-like `FCSEL`: enabled
 - compare-like `FCCMP`: enabled
-- compare-like `CSEL/CSINC/CSINV/CSNEG/CSET/CSETM`: temporarily forced back to
-  fallback
 
-Reason:
+Current `CSEL/CS*` model is no longer the old `peek + keep alive` path.
+Instead:
 
-- SPEC `531.deepsjeng_r test` bisects to the add-side / compare-like rollout
-- current closure shows a live correctness issue when compare-like
-  `CSEL/CS*` pending-peek is enabled
-- disabling just compare-like `CSEL/CS*` restores `531` without backing out the
-  rest of the compare-like non-branch family
+- compare-like producer conditions are consumed locally in `trans_CSEL()`
+- the condition result is derived from producer NZCV bits
+- producer flags are immediately retired into split flags
+
+This is the model introduced by:
+
+- `47d27a1bb1` `aarch64: rework compare-like CSEL pending retirement`
+
+Reason this replaced the older model:
+
+- SPEC `531.deepsjeng_r test` exposed a real correctness hole in the previous
+  compare-like `CSEL/CS*` pending-peek lifetime
+- the rework preserves direct-path behavior while restoring correct flags
+  lifetime after the consumer
 
 ## Latest Worktree Commits
+
+Latest main-branch merge and fix:
+
+- `2fb8ccb1c4` `Merge branch 'compare-like-csel-cs-rework-v10.2.0' into a64-x86-status4-v10.2.0`
+- `47d27a1bb1` `aarch64: rework compare-like CSEL pending retirement`
 
 Recent branch tip history:
 
@@ -162,25 +183,44 @@ Recent branch tip history:
 
 ## Fresh Verification Evidence
 
-These focused checks are currently green on the active worktree tip:
+These focused checks are currently green on the merged main branch:
 
 ```bash
-ninja -C build qemu-aarch64
-tests/tcg/aarch64/check-cmp-bcond-gap-host-direct.sh \
-    ./build/qemu-aarch64 \
-    build/tests/tcg/aarch64-linux-user/cmp-bcond-gap-host-direct
-./build/qemu-aarch64 -cpu max \
-    build/tests/tcg/aarch64-linux-user/cmp-bcond-gap-host-direct
-tests/tcg/aarch64/check-cmp-bcond-ext-host-direct.sh \
-    ./build/qemu-aarch64 \
-    build/tests/tcg/aarch64-linux-user/cmp-bcond-ext-host-direct
-tests/tcg/aarch64/check-adc-sbc-host-direct.sh \
-    ./build/qemu-aarch64 \
-    build/tests/tcg/aarch64-linux-user/adc-sbc-host-direct
-./build/qemu-aarch64 -cpu max \
-    build/tests/tcg/aarch64-linux-user/adc-sbc-host-direct
-./build/qemu-aarch64 -cpu max \
-    build/tests/tcg/aarch64-linux-user/nzcv-status4
+ninja -C build-aarch64-linux-user qemu-aarch64
+bash tests/tcg/aarch64/check-cmp-csel-gap-host-direct.sh \
+    ./build-aarch64-linux-user/qemu-aarch64 \
+    build-aarch64-linux-user/tests/tcg/aarch64-linux-user/cmp-csel-gap-host-direct
+./build-aarch64-linux-user/qemu-aarch64 \
+    build-aarch64-linux-user/tests/tcg/aarch64-linux-user/nzcv-status4
+./build-aarch64-linux-user/qemu-aarch64 -L /usr/aarch64-linux-gnu \
+    build-aarch64-linux-user/tests/tcg/aarch64-linux-user/cmpstress-o3
+./build-aarch64-linux-user/qemu-aarch64 -L /usr/aarch64-linux-gnu \
+    build-aarch64-linux-user/tests/tcg/aarch64-linux-user/adcsbc-bench
+bash tests/tcg/aarch64/check-adc-sbc-host-direct.sh \
+    ./build-aarch64-linux-user/qemu-aarch64 \
+    build-aarch64-linux-user/tests/tcg/aarch64-linux-user/adc-sbc-host-direct
+cd /home/wangruoyu/cpuspec2017/benchspec/CPU/531.deepsjeng_r/run/run_base_test_mytest-64.0000
+/home/wangruoyu/qemu10.2/build-aarch64-linux-user/qemu-aarch64 -L /usr/aarch64-linux-gnu \
+    ./deepsjeng_r_base.mytest-64 test.txt > 531-main.out 2>531-main.err
+/home/wangruoyu/cpuspec2017/bin/specperl \
+    /home/wangruoyu/cpuspec2017/bin/harness/specdiff -m -l 10 --obiwan \
+    /home/wangruoyu/cpuspec2017/benchspec/CPU/531.deepsjeng_r/data/test/output/test.out \
+    531-main.out > 531-main.cmp
+```
+
+Observed result:
+
+- `check-cmp-csel-gap-host-direct.sh`: PASS
+- `nzcv-status4`: `PASS`
+- `cmpstress-o3`: exit code `0`
+- `adcsbc-bench`: exit code `0`
+- `check-adc-sbc-host-direct.sh`: PASS
+- `531.deepsjeng_r test`: `RUN_RC=0`, `DIFF_RC=0`
+
+Historical worktree-era focused checks that were green during the larger
+feature expansion remain listed below for reference:
+
+```bash
 bash tests/tcg/aarch64/check-cmp-csel-gap-host-direct.sh \
     ./build/qemu-aarch64 \
     build/tests/tcg/aarch64-linux-user/cmp-csel-gap-host-direct
