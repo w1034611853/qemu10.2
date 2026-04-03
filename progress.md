@@ -33,7 +33,7 @@ Main workspace:
 - repo: `/home/wangruoyu/qemu10.2`
 - branch: `a64-x86-status4-v10.2.0`
 - current main `HEAD`:
-  `2fb8ccb1c4` (`Merge branch 'compare-like-csel-cs-rework-v10.2.0' into a64-x86-status4-v10.2.0`)
+  `65b9375654` (`docs: update progress after CSEL rework merge`)
 
 Main branch now includes:
 
@@ -52,6 +52,13 @@ Active isolated worktree:
   `adcs-sbcs-producer-direct-v10.2.0`
 - current worktree `HEAD`:
   `5f350f8f0c` (`aarch64: chain ADCS/SBCS rd into gap floating consumers`)
+
+Repo-local debug worktree cleanup:
+
+- obsolete repo-local `531-*`, `regression-debug`, and
+  `compare-like-csel-cs-baseline` worktrees have been removed
+- the remaining repo-local feature worktree is:
+  `adcs-sbcs-producer-direct-v10.2.0`
 
 ## What Is Complete
 
@@ -216,6 +223,41 @@ Observed result:
 - `adcsbc-bench`: exit code `0`
 - `check-adc-sbc-host-direct.sh`: PASS
 - `531.deepsjeng_r test`: `RUN_RC=0`, `DIFF_RC=0`
+
+## External Functional Correctness Results
+
+Additional functional-correctness coverage is recorded in:
+
+- `/home/wangruoyu/qemu_nzcv/functional_test_results.md`
+
+That result set records:
+
+- CoreMark: PASS
+- Dhrystone: PASS
+- SPEC CPU2017 `test` size:
+  - `502.gcc_r`: PASS
+  - `505.mcf_r`: PASS
+  - `520.omnetpp_r`: PASS
+  - `523.xalancbmk_r`: PASS
+  - `525.x264_r`: PASS, with separate image validation showing
+    `AVG SSIM: 1.000000000`
+  - `531.deepsjeng_r`: PASS
+  - `541.leela_r`: PASS
+  - `557.xz_r`: PASS
+
+Known exception:
+
+- `500.perlbench_r` remains excluded from that summary because it still needs
+  the nested-perl wrapper workaround documented in
+  `docs/superpowers/summaries/2026-04-02-perlbench-test-workload-qemu-wrapper-workaround.md`
+
+Practical reading of the current correctness state:
+
+- local focused TCG regressions are green on main
+- direct `531.deepsjeng_r test` `specdiff` is green on main
+- the external benchmark summary covers a wider user-visible workload set
+- the remaining correctness caveat is still `500.perlbench_r` harness handling,
+  not a demonstrated NZCV semantic regression
 
 Historical worktree-era focused checks that were green during the larger
 feature expansion remain listed below for reference:
