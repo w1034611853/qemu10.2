@@ -665,6 +665,10 @@ static void a64_get_current_nzcv_bits(DisasContext *s, TCGv_i32 n, TCGv_i32 z,
                                       TCGv_i32 c, TCGv_i32 v);
 static void a64_gen_nz64_bits(TCGv_i32 n, TCGv_i32 z, TCGv_i64 result);
 static void a64_gen_nz32_bits(TCGv_i32 n, TCGv_i32 z, TCGv_i32 result);
+static void gen_add_CC(DisasContext *s, int sf, TCGv_i64 dest,
+                       TCGv_i64 t0, TCGv_i64 t1, bool allow_direct);
+static void gen_sub_CC(DisasContext *s, int sf, TCGv_i64 dest,
+                       TCGv_i64 t0, TCGv_i64 t1, bool allow_direct);
 static void a64_gen_add_nzcv_bits(int sf, TCGv_i64 dest,
                                   TCGv_i32 n, TCGv_i32 z,
                                   TCGv_i32 c, TCGv_i32 v,
@@ -947,6 +951,11 @@ static bool a64_insn_is_condsel(uint32_t insn, int *cc)
     return true;
 }
 
+static bool a64_cmp_cond_supported_for_lazy_condsel(int cc)
+{
+    return cc >= 0 && cc < 14;
+}
+
 static bool a64_cmp_cond_to_tcg(TCGCond *cond, int cc);
 static void a64_test_cc_cmp_to_bool_i32(TCGv_i32 dst, DisasCompare64 *c64);
 
@@ -956,7 +965,6 @@ static bool a64_find_future_condsel_gap(DisasContext *s, uint8_t *gap_insns,
     target_ulong pc = s->base.pc_next;
     int remaining = s->base.max_insns - s->base.num_insns;
     int cc;
-    TCGCond cond;
 
     *gap_insns = 0;
 
@@ -970,7 +978,7 @@ static bool a64_find_future_condsel_gap(DisasContext *s, uint8_t *gap_insns,
 
         insn = arm_ldl_code(s->env, &s->base, pc, s->sctlr_b);
         if (a64_insn_is_condsel(insn, &cc)) {
-            if (!a64_cmp_cond_to_tcg(&cond, cc)) {
+            if (!a64_cmp_cond_supported_for_lazy_condsel(cc)) {
                 return false;
             }
             *gap_insns = gap;
@@ -1738,6 +1746,9 @@ static bool a64_cmp_cond_to_tcg(TCGCond *cond, int cc)
 }
 
 static bool a64_pending_cc_has_live_split_flags(DisasContext *s);
+static void a64_set_cond_bool_from_nzcv_bits(TCGv_i32 dst, int cc,
+                                             TCGv_i32 n, TCGv_i32 z,
+                                             TCGv_i32 c, TCGv_i32 v);
 
 #if defined(__i386__) || defined(__x86_64__)
 static bool a64_cmp_cond_to_x86_jcc(int *jcc, int cc)
@@ -1903,6 +1914,69 @@ static bool a64_try_peek_cmp_cond_bool_i32(DisasContext *s, int cc,
 
     s->a64_pending_cc.keep = true;
     a64_cmp_note_peek(s, consumer);
+    return true;
+}
+
+static void a64_retire_compare_like_pending_to_split(DisasContext *s,
+                                                     TCGv_i32 n,
+                                                     TCGv_i32 z,
+                                                     TCGv_i32 c,
+                                                     TCGv_i32 v)
+{
+    tcg_debug_assert(s->a64_pending_cc.valid);
+    tcg_debug_assert(s->a64_pending_cc.kind == A64_PENDING_CC_REWINDABLE_CMP);
+    a64_invalidate_x86_flags(s);
+    a64_note_flags_split(s);
+
+    tcg_gen_shli_i32(cpu_NF, n, 31);
+    tcg_gen_xori_i32(cpu_ZF, z, 1);
+    tcg_gen_mov_i32(cpu_CF, c);
+    tcg_gen_shli_i32(cpu_VF, v, 31);
+
+    a64_cmp_note_drop(s);
+    a64_clear_pending_cc_producer(s);
+}
+
+static bool a64_try_consume_cmp_cond_bool_i32_to_split(DisasContext *s, int cc,
+                                                       TCGv_i32 dst,
+                                                       const char *consumer)
+{
+    TCGv_i32 n, z, c, v;
+
+    if (!s->a64_pending_cc.valid ||
+        s->a64_pending_cc.kind == A64_PENDING_CC_MATERIALIZED_ADD ||
+        (s->a64_pending_cc.kind == A64_PENDING_CC_MATERIALIZED_SUB &&
+         (s->a64_pending_cc.cc_op == A64_X86_CC_SBC64 ||
+          s->a64_pending_cc.cc_op == A64_X86_CC_SBC32)) ||
+        a64_pending_cc_has_live_split_flags(s)) {
+        return false;
+    }
+
+    n = tcg_temp_new_i32();
+    z = tcg_temp_new_i32();
+    c = tcg_temp_new_i32();
+    v = tcg_temp_new_i32();
+
+    switch (s->a64_pending_cc.cc_op) {
+    case A64_X86_CC_ADD64:
+    case A64_X86_CC_ADD32:
+        a64_gen_add_nzcv_bits(s->a64_pending_cc.sf, tcg_temp_new_i64(),
+                              n, z, c, v,
+                              s->a64_pending_cc.lhs, s->a64_pending_cc.rhs);
+        break;
+    case A64_X86_CC_SUB64:
+    case A64_X86_CC_SUB32:
+        a64_gen_sub_nzcv_bits(s->a64_pending_cc.sf, tcg_temp_new_i64(),
+                              n, z, c, v,
+                              s->a64_pending_cc.lhs, s->a64_pending_cc.rhs);
+        break;
+    default:
+        return false;
+    }
+
+    a64_set_cond_bool_from_nzcv_bits(dst, cc, n, z, c, v);
+    a64_cmp_note_consume(s, consumer);
+    a64_retire_compare_like_pending_to_split(s, n, z, c, v);
     return true;
 }
 
@@ -8608,13 +8682,6 @@ static bool do_addsub_imm(DisasContext *s, arg_rri_sf *a,
         materialized_adc_add = a64_find_adjacent_plain_adc(s, true);
     }
 
-    /*
-     * Current SPEC closure shows compare-like -> CSEL/CS* still has a
-     * correctness hole. Keep this family on the fallback path until the
-     * pending-compare peek lifetime is fixed.
-     */
-    lazy_condsel_cmp = false;
-
     if (!setflags) {
         tcg_rd = cpu_reg_sp(s, a->rd);
     } else if (!lazy_bcond_cmp && !lazy_condsel_cmp && !lazy_ccmp_cmp &&
@@ -12783,13 +12850,6 @@ static bool do_addsub_ext(DisasContext *s, arg_addsub_ext *a,
         materialized_adc_add = a64_find_adjacent_plain_adc(s, true);
     }
 
-    /*
-     * Current SPEC closure shows compare-like -> CSEL/CS* still has a
-     * correctness hole. Keep this family on the fallback path until the
-     * pending-compare peek lifetime is fixed.
-     */
-    lazy_condsel_cmp = false;
-
     /* non-flag setting ops may use SP */
     if (!setflags) {
         tcg_rd = cpu_reg_sp(s, a->rd);
@@ -13035,13 +13095,6 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
             materialized_adc_add = a64_find_adjacent_plain_adc(s, true);
         }
     }
-
-    /*
-     * Current SPEC closure shows compare-like -> CSEL/CS* still has a
-     * correctness hole. Keep this family on the fallback path until the
-     * pending-compare peek lifetime is fixed.
-     */
-    lazy_condsel_cmp = false;
 
     if (!setflags || (!lazy_bcond_cmp && !lazy_condsel_cmp &&
                       !lazy_fcsel_cmp && !lazy_fccmp_cmp &&
@@ -13583,8 +13636,8 @@ static bool trans_CSEL(DisasContext *s, arg_CSEL *a)
     TCGv_i64 zero = tcg_constant_i64(0);
     DisasCompare64 c;
     TCGv_i32 cond32 = tcg_temp_new_i32();
-
-    if (a64_try_peek_cmp_cond_bool_i32(s, a->cond, cond32, "CSEL-pending")) {
+    if (a64_try_consume_cmp_cond_bool_i32_to_split(s, a->cond, cond32,
+                                                   "CSEL-pending")) {
         TCGv_i64 cond64 = tcg_temp_new_i64();
 
         tcg_gen_extu_i32_i64(cond64, cond32);
