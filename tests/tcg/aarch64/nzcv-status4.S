@@ -1979,6 +1979,33 @@ t_aa_after:
     expect_nzcv 0x6, 0xba
     expect_reg_imm w8, 0, 0xba
 
+    /* 0xbb: CMP + gap + CSEL(eq) -> B.eq preserves producer flags */
+    mov     x3, #55
+    mov     x4, #66
+    mov     x0, #7
+    cmp     x0, #7
+    nop
+    csel    x2, x3, x4, eq
+    b.eq    tbb_ok
+    mov     x20, #0xbb
+    b       fail
+tbb_ok:
+    expect_nzcv 0x6, 0xbb
+    expect_reg_imm x2, 55, 0xbb
+
+    /* 0xbc: CMN + gap + CSET(cs) -> ADC preserves carry and NZCV */
+    mov     x5, #10
+    mov     x6, #20
+    movn    x0, #0            /* -1 */
+    mov     x1, #1
+    cmn     x0, x1
+    nop
+    cset    x2, cs
+    adc     x7, x5, x6
+    expect_nzcv 0x6, 0xbc
+    expect_reg_imm x2, 1, 0xbc
+    expect_reg_imm x7, 31, 0xbc
+
     b       after_shared_consumers
 
 shared_nzcv_consumer:
