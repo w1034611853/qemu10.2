@@ -844,11 +844,13 @@ static int tcg_out_pool_finalize(TCGContext *s)
 
 /* Define an enumeration for the various combinations. */
 
+#define C_O0_I0                          c_o0_i0,
 #define C_O0_I1(I1)                     C_PFX1(c_o0_i1_, I1),
 #define C_O0_I2(I1, I2)                 C_PFX2(c_o0_i2_, I1, I2),
 #define C_O0_I3(I1, I2, I3)             C_PFX3(c_o0_i3_, I1, I2, I3),
 #define C_O0_I4(I1, I2, I3, I4)         C_PFX4(c_o0_i4_, I1, I2, I3, I4),
 
+#define C_O1_I0(O1)                     C_PFX1(c_o1_i0_, O1),
 #define C_O1_I1(O1, I1)                 C_PFX2(c_o1_i1_, O1, I1),
 #define C_O1_I2(O1, I1, I2)             C_PFX3(c_o1_i2_, O1, I1, I2),
 #define C_O1_I3(O1, I1, I2, I3)         C_PFX4(c_o1_i3_, O1, I1, I2, I3),
@@ -875,10 +877,12 @@ typedef enum {
 
 static TCGConstraintSetIndex tcg_target_op_def(TCGOpcode, TCGType, unsigned);
 
+#undef C_O0_I0
 #undef C_O0_I1
 #undef C_O0_I2
 #undef C_O0_I3
 #undef C_O0_I4
+#undef C_O1_I0
 #undef C_O1_I1
 #undef C_O1_I2
 #undef C_O1_I3
@@ -902,11 +906,13 @@ typedef struct TCGConstraintSet {
     const char *args_ct_str[TCG_MAX_OP_ARGS];
 } TCGConstraintSet;
 
+#define C_O0_I0                          { 0, 0, { } },
 #define C_O0_I1(I1)                     { 0, 1, { #I1 } },
 #define C_O0_I2(I1, I2)                 { 0, 2, { #I1, #I2 } },
 #define C_O0_I3(I1, I2, I3)             { 0, 3, { #I1, #I2, #I3 } },
 #define C_O0_I4(I1, I2, I3, I4)         { 0, 4, { #I1, #I2, #I3, #I4 } },
 
+#define C_O1_I0(O1)                     { 1, 0, { #O1 } },
 #define C_O1_I1(O1, I1)                 { 1, 1, { #O1, #I1 } },
 #define C_O1_I2(O1, I1, I2)             { 1, 2, { #O1, #I1, #I2 } },
 #define C_O1_I3(O1, I1, I2, I3)         { 1, 3, { #O1, #I1, #I2, #I3 } },
@@ -929,10 +935,12 @@ static const TCGConstraintSet constraint_sets[] = {
 #include "tcg-target-con-set.h"
 };
 
+#undef C_O0_I0
 #undef C_O0_I1
 #undef C_O0_I2
 #undef C_O0_I3
 #undef C_O0_I4
+#undef C_O1_I0
 #undef C_O1_I1
 #undef C_O1_I2
 #undef C_O1_I3
@@ -951,11 +959,13 @@ static const TCGConstraintSet constraint_sets[] = {
 
 /* Expand the enumerator to be returned from tcg_target_op_def(). */
 
+#define C_O0_I0                          c_o0_i0
 #define C_O0_I1(I1)                     C_PFX1(c_o0_i1_, I1)
 #define C_O0_I2(I1, I2)                 C_PFX2(c_o0_i2_, I1, I2)
 #define C_O0_I3(I1, I2, I3)             C_PFX3(c_o0_i3_, I1, I2, I3)
 #define C_O0_I4(I1, I2, I3, I4)         C_PFX4(c_o0_i4_, I1, I2, I3, I4)
 
+#define C_O1_I0(O1)                     C_PFX1(c_o1_i0_, O1)
 #define C_O1_I1(O1, I1)                 C_PFX2(c_o1_i1_, O1, I1)
 #define C_O1_I2(O1, I1, I2)             C_PFX3(c_o1_i2_, O1, I1, I2)
 #define C_O1_I3(O1, I1, I2, I3)         C_PFX4(c_o1_i3_, O1, I1, I2, I3)
@@ -1032,6 +1042,23 @@ typedef struct TCGOutOpX86CmpJcc {
     void (*out_ri)(TCGContext *s, TCGType type, int jcc,
                    TCGReg a1, tcg_target_long a2, TCGLabel *label);
 } TCGOutOpX86CmpJcc;
+
+typedef struct TCGOutOpX86Jcc {
+    TCGOutOp base;
+    void (*out)(TCGContext *s, int jcc, TCGLabel *label);
+} TCGOutOpX86Jcc;
+
+typedef struct TCGOutOpX86Cmov {
+    TCGOutOp base;
+    void (*out)(TCGContext *s, TCGType type, int jcc,
+                TCGReg a0, TCGReg a1);
+} TCGOutOpX86Cmov;
+
+typedef struct TCGOutOpX86Movi {
+    TCGOutOp base;
+    void (*out)(TCGContext *s, TCGType type, TCGReg a0,
+                tcg_target_long imm);
+} TCGOutOpX86Movi;
 
 typedef struct TCGOutOpX86CmpBrcondCaptureRaw {
     TCGOutOp base;
@@ -1292,6 +1319,10 @@ static const TCGOutOp * const all_outop[NB_OPS] = {
 #if defined(__i386__) || defined(__x86_64__)
     OUTOP(INDEX_op_x86_cmp_brcond, TCGOutOpBrcond, outop_x86_cmp_brcond),
     OUTOP(INDEX_op_x86_cmp_jcc, TCGOutOpX86CmpJcc, outop_x86_cmp_jcc),
+    OUTOP(INDEX_op_x86_jcc, TCGOutOpX86Jcc, outop_x86_jcc),
+    OUTOP(INDEX_op_x86_cmov, TCGOutOpX86Cmov, outop_x86_cmov),
+    OUTOP(INDEX_op_x86_movi_noflags, TCGOutOpX86Movi, outop_x86_movi_noflags),
+    OUTOP(INDEX_op_x86_add_noflags, TCGOutOpBinary, outop_x86_add_noflags),
     OUTOP(INDEX_op_x86_cmp_brcond_capture_rawflags,
           TCGOutOpX86CmpBrcondCaptureRaw,
           outop_x86_cmp_brcond_capture_rawflags),
@@ -5811,6 +5842,7 @@ static void tcg_reg_alloc_op(TCGContext *s, const TCGOp *op)
     case INDEX_op_addco:
     case INDEX_op_and:
     case INDEX_op_andc:
+    case INDEX_op_x86_add_noflags:
     case INDEX_op_clz:
     case INDEX_op_ctz:
     case INDEX_op_divs:
@@ -6111,6 +6143,38 @@ static void tcg_reg_alloc_op(TCGContext *s, const TCGOp *op)
             } else {
                 out->out_rr(s, type, jcc, new_args[0], new_args[1], label);
             }
+        }
+        break;
+
+    case INDEX_op_x86_jcc:
+        {
+            const TCGOutOpX86Jcc *out =
+                container_of(all_outop[op->opc], TCGOutOpX86Jcc, base);
+            int jcc = new_args[0];
+            TCGLabel *label = arg_label(new_args[1]);
+
+            out->out(s, jcc, label);
+        }
+        break;
+
+    case INDEX_op_x86_cmov:
+        {
+            const TCGOutOpX86Cmov *out =
+                container_of(all_outop[op->opc], TCGOutOpX86Cmov, base);
+            int jcc = new_args[3];
+
+            tcg_debug_assert(!const_args[1]);
+            tcg_debug_assert(!const_args[2]);
+            out->out(s, type, jcc, new_args[0], new_args[1]);
+        }
+        break;
+
+    case INDEX_op_x86_movi_noflags:
+        {
+            const TCGOutOpX86Movi *out =
+                container_of(all_outop[op->opc], TCGOutOpX86Movi, base);
+
+            out->out(s, type, new_args[0], new_args[1]);
         }
         break;
 

@@ -824,36 +824,332 @@ Fresh evidence for this slice:
 - `cmpstress-o3`: `RC=0`
 - `nzcv-status4`: `PASS`
 
-## Old Docs Now Folded Into This One
+## Adjacent `ANDS/TST -> CCMP/CCMN` Host-JCC Direct Path
 
-The following files are still useful references, but this file replaces them as
-the main day-to-day progress tracker:
+On `2026-04-07`, the next logic-producer optimization slice landed in the
+working tree:
 
-- [handoff.md](/home/wangruoyu/qemu10.2/docs/superpowers/archive/handoff.md)
-- [codex_a64_x86_status4_handoff.md](/home/wangruoyu/qemu10.2/docs/superpowers/archive/codex_a64_x86_status4_handoff.md)
-- [2026-04-01-direct-path-candidate-matrix.md](/home/wangruoyu/qemu10.2/docs/superpowers/archive/2026-04-01-direct-path-candidate-matrix.md)
-- [2026-04-02-perlbench-test-workload-qemu-wrapper-workaround.md](/home/wangruoyu/qemu10.2/docs/superpowers/summaries/2026-04-02-perlbench-test-workload-qemu-wrapper-workaround.md)
-- [2026-04-02-spec-cpu2017-seven-test-size-runbook.md](/home/wangruoyu/qemu10.2/docs/superpowers/summaries/2026-04-02-spec-cpu2017-seven-test-size-runbook.md)
-- [2026-04-02-worktree-closure-and-merge-strategy.md](/home/wangruoyu/qemu10.2/docs/superpowers/summaries/2026-04-02-worktree-closure-and-merge-strategy.md)
-- [2026-04-01-lazy-compare-phase-2-bcond.md](/home/wangruoyu/qemu10.2/docs/superpowers/archive/2026-04-01-lazy-compare-phase-2-bcond.md)
-- [2026-04-01-lazy-compare-phase-2-design.md](/home/wangruoyu/qemu10.2/docs/superpowers/specs/2026-04-01-lazy-compare-phase-2-design.md)
+- adjacent `ANDS/TST -> CCMP`
+- adjacent `ANDS/TST -> CCMN`
 
-## Current Coding Starting Point
+What this slice does:
 
-The next implementation work should begin from the clean worktree:
+- adds an x86-host-flags condition fast path for adjacent logic producers in
+  [`trans_CCMP()`](/home/ruoyu/code/qemu_nzcv/qemu10.2/target/arm/tcg/translate-a64.c)
+- uses `x86_jcc` on the live host flags from the preceding `ANDS/TST` to pick
+  between:
+  - the literal fallback NZCV
+  - the computed `CCMP/CCMN` add/sub NZCV
+- keeps the result in canonical raw NZCV form, so downstream consumers still
+  see the usual raw-flags state
+- removes the old adjacent logic path's `a64_test_cc_bool_i32()` /
+  `movcond_i32` raw-flags condition decode from this consumer
 
-- branch: `adcs-sbcs-producer-direct-v10.2.0`
-- tip: `5f350f8f0c`
-- target area:
-  - `target/arm/tcg/translate-a64.c`
-  - `tests/tcg/aarch64/`
+What this slice does not try to do:
 
-The immediate question after this point is no longer whether the carry
-producer family can be extended to the current non-branch consumers; that work
-is now in place too.
+- it does not keep `CCMP/CCMN` results as a new live-host-flags producer
+- it is a consumer-side fast path, not a new compare-like producer model
 
-The next likely directions are now:
+Fresh evidence for this slice:
 
-- deeper assertion tightening / consolidation
-- broader perf closure and merge preparation
-- or a different consumer family entirely
+- `check-logic-ccmp-host-direct.sh`: PASS
+- `logic-ccmp-host-direct`: exit code `0`
+- `check-logic-csel-host-direct.sh`: PASS
+- `check-logic-csel-ccmp-gap-host-direct.sh`: PASS
+
+## Logic `CSEL/CS*` Dirty-Tree Correctness Fix
+
+On `2026-04-07`, a local dirty-worktree regression in the adjacent
+`ANDS/TST -> CSEL/CS*` fast path was traced to one specific host-codegen
+pattern:
+
+- materializing a logical consumer-side constant `0` with plain `movi`
+- on x86 this became `xor reg, reg`
+- that `xor` clobbered the live host flags that the following `x86_cmov`
+  was supposed to consume
+
+This showed up in two places:
+
+- `CSET/CSETM`, where the false path starts from `0`
+- `CSEL/CS*` forms that read `ZR`, where `read_cpu_reg(..., 31, ...)`
+  also built the source with `movi 0`
+
+What changed:
+
+- added a host-only `x86_movi_noflags` TCG op that forces a mov-style
+  constant materialization instead of the flag-clobbering zeroing idiom
+- switched the adjacent logic `CSEL/CS*` fast path to use that op for:
+  - `CSET/CSETM` false-path `0`
+  - `CSET/CSETM` true-path `1/-1`
+  - any `rn == zr` / `rm == zr` source inside the direct path
+- kept the earlier `rd == rn` overlap fix in place so the true-path source is
+  snapped before writing the false path into `rd`
+
+Focused coverage added for the blind spots that caused the regression:
+
+- `CSET` false case
+- `CSETM` false case
+- `CSEL ... , xzr` false case
+- `CSEL xzr, ...` false case
+
+Fresh evidence for this fix:
+
+- `/tmp/cset-like-sanity`: `RC=0`
+- `/tmp/csel-zr-sanity`: `RC=0`
+- `check-logic-csel-host-direct.sh`: PASS
+- `logic-csel-host-direct`: `RC=0`
+- quick SPEC dirty-tree repros:
+  - `502.gcc_r`: `RC=0`
+  - `523.xalancbmk_r`: `RC=0`
+  - `531.deepsjeng_r`: `RUN_RC=0`, `DIFF_RC=0`
+
+Current implication:
+
+- the logic line is no longer just "coverage plus assertions"
+- adjacent `B.cond`, `CSEL/CS*`, and now `CCMP/CCMN` all have real
+  host-flags-consuming fast paths
+- the remaining logic-family headroom is now mostly:
+  - stronger path-shape assertions / consolidation
+  - or deciding whether to push beyond consumer-side fast paths into a new
+    producer model
+
+## Compare-Like `CSEL/CS* -> B.cond` Producer Rechain (First Slice)
+
+On `2026-04-07`, the first "new producer model" slice landed in the working
+tree:
+
+- compare-like producer
+- gap-safe consume into `CSEL/CS*`
+- then immediate `B.cond`
+
+What this slice does:
+
+- after `CSEL/CS*` consumes a compare-like pending producer through the
+  existing `CSEL-pending` path, it can now re-seed a fresh adjacent-only
+  compare producer from the same `lhs/rhs/cc_op`
+- the re-seeded producer is intentionally narrow:
+  - only for flags-transparent `CSEL/CS*` consumers
+  - only when the very next guest instruction is a plain `B.cond`
+- this avoids reviving the older unsafe "peek and keep alive" model; the
+  original compare is still retired to split flags first, and only then is a
+  new adjacent producer recorded for the next direct branch consumer
+
+What this slice does not try to do:
+
+- it does not rechain across a gap after `CSEL/CS*`
+- it does not yet rechain into a second `CSEL/CS*` or into `CCMP/CCMN`
+- it does not alter the logic-producer host-flags line
+
+Files added for focused coverage:
+
+- `tests/tcg/aarch64/cmp-csel-bcond-chain-host-direct.S`
+- `tests/tcg/aarch64/check-cmp-csel-bcond-chain-host-direct.sh`
+
+Fresh focused evidence for this slice:
+
+- `check-cmp-csel-bcond-chain-host-direct.sh`: PASS
+- `cmp-csel-bcond-chain-host-direct`: `RC=0`
+- `check-cmp-csel-gap-host-direct.sh`: PASS
+- `check-cmp-bcond-gap-host-direct.sh`: PASS
+- `check-logic-csel-host-direct.sh`: PASS
+
+CPU SPEC test-size regression spot-check after this slice:
+
+- `500.perlbench_r`:
+  - `makerand.out`: matches reference
+  - `test.out`: still fails through the known perl wrapper / symlink issue
+    (`Syntax error: "(" unexpected`), so this remains the same class of
+    limitation already called out in the performance report
+- `502.gcc_r`: `RUN_RC=0`
+- `505.mcf_r`: `RUN_RC=0`, output matches reference
+- `531.deepsjeng_r`: `RUN_RC=0`, output matches reference
+- `541.leela_r`: `RUN_RC=0`, output matches reference
+- `557.xz_r`: `RUN_RC=0`
+
+Notes from the SPEC rerun:
+
+- the copied-run `specdiff` invocations in this environment could not load
+  `compare.pl`, so final output checks for `505/531/541` were confirmed with
+  direct file diffs instead
+- the resident `502.gcc_r` reference `.s` file under the original run
+  directory is stale/truncated (only the first `.file` line), so it was not a
+  useful correctness oracle; the meaningful result there is the successful
+  compiler run itself
+
+Current implication:
+
+- the tree now has the first explicit producer-rechain step beyond pure
+  consumer-side fast paths
+- the next natural extension, if more chaining is wanted, is:
+  - `CSEL/CS* -> CCMP/CCMN`
+  - or a wider rechain policy than "immediate `B.cond` only"
+
+## Compare-Like `CSEL/CS* -> CCMP/CCMN` Producer Rechain
+
+Later on `2026-04-07`, the next adjacent producer-rechain slice landed:
+
+- compare-like producer
+- gap-safe consume into `CSEL/CS*`
+- then immediate `CCMP/CCMN`
+
+What changed:
+
+- widened the `CSEL/CS*` compare-like rechain gate so it can re-seed a fresh
+  adjacent compare producer not only for immediate `B.cond`, but also for an
+  immediate plain `CCMP/CCMN`
+- kept the same safety model as the prior slice:
+  - the original compare-like pending producer is still retired to split flags
+  - the re-seeded producer is still adjacent-only
+  - no gap after `CSEL/CS*` is allowed
+
+What this slice still does not try to do:
+
+- it does not rechain across a blocker after `CSEL/CS*`
+- it does not yet rechain into a second `CSEL/CS*`
+- it does not try to keep `CCMP/CCMN` themselves as another new producer
+
+Files added for focused coverage:
+
+- `tests/tcg/aarch64/cmp-csel-ccmp-chain-host-direct.S`
+- `tests/tcg/aarch64/check-cmp-csel-ccmp-chain-host-direct.sh`
+
+Fresh focused evidence for this slice:
+
+- `check-cmp-csel-ccmp-chain-host-direct.sh`: PASS
+- `cmp-csel-ccmp-chain-host-direct`: `RC=0`
+- `check-cmp-csel-bcond-chain-host-direct.sh`: PASS
+- `cmp-csel-bcond-chain-host-direct`: `RC=0`
+- `check-cmp-ccmp-gap-host-direct.sh`: PASS
+- `check-logic-csel-host-direct.sh`: PASS
+
+CPU SPEC test-size regression spot-check after this slice:
+
+- `500.perlbench_r`:
+  - `RUN_RC=0`
+  - `makerand.out`: matches reference
+  - `test.out`: still differs only through the known perl wrapper / symlink
+    failure (`Syntax error: "(" unexpected`)
+- `502.gcc_r`: `RUN_RC=0`, generated assembly has `21` lines
+- `505.mcf_r`: `RUN_RC=0`, both output files match reference
+- `531.deepsjeng_r`: `RUN_RC=0`, output matches reference
+- `541.leela_r`: `RUN_RC=0`, output matches reference
+- `557.xz_r`: `RUN_RC=0`
+
+Current implication:
+
+- compare-like rechain is no longer limited to `... -> B.cond`
+- the next natural extension, if this line keeps expanding, is now either:
+  - `CSEL/CS* -> second CSEL/CS*`
+  - or making `CCMP/CCMN` themselves participate as a fresh producer stage
+
+## Current Scheme
+
+As of `2026-04-07`, the active local line has three layers:
+
+- compare-like producer line:
+  - existing compare-like pending producer can still feed the restored
+    compare-like `CSEL/CS*` path
+  - after a flags-transparent `CSEL/CS*` consume, the translator can now
+    re-seed a fresh adjacent-only compare producer for one more immediate
+    consumer
+- logic producer line:
+  - adjacent `ANDS/TST -> B.cond`
+  - adjacent `ANDS/TST -> CSEL/CSINV/CSET/CSETM/CSINC/CSNEG`
+  - adjacent `ANDS/TST -> CCMP/CCMN`
+- x86 backend support line:
+  - `x86_jcc`
+  - `x86_cmov`
+  - `x86_add_noflags`
+  - `x86_movi_noflags`
+
+The current producer-rechain slices now cover:
+
+- compare-like producer -> `CSEL/CS*` -> immediate `B.cond`
+- compare-like producer -> `CSEL/CS*` -> immediate `CCMP/CCMN`
+
+The current boundaries are still deliberate:
+
+- all new chaining is adjacent-only after `CSEL/CS*`
+- no rechain across a gap after the transparent consumer
+- no `CSEL/CS* -> second CSEL/CS*` yet
+- no attempt yet to keep `CCMP/CCMN` themselves alive as another fresh
+  producer stage
+- no TB-level gating or heuristic disablement in this line
+
+The working assumption behind the current direction is:
+
+- perf does not look like a pure "add more one-shot consumers" problem
+- the next plausible gain is to let one producer pay for multiple downstream
+  consumers instead of retiring after the first non-branch hit
+
+## Next Plan
+
+The next implementation work should stay on the new producer-model line before
+branching into broader heuristics.
+
+Priority order:
+
+- first priority: extend compare-like rechain to
+  `CSEL/CS* -> second CSEL/CS*`
+- second priority: decide whether `CCMP/CCMN` should become another fresh
+  producer stage rather than a terminal consumer
+- third priority: once the chain shape is wider, rerun perf measurement and
+  judge whether more producer families are still worth adding
+
+What is explicitly not the near-term focus:
+
+- TB-level opt-out or other broad gating heuristics
+- widening the current rechain across arbitrary gaps
+- starting a new producer family before the current producer-model line has a
+  clearer perf signal
+
+## Per-Slice Method
+
+Each optimization slice should continue to follow the same workflow:
+
+- keep the scope narrow:
+  - one chain extension at a time
+  - prefer adjacent-only first
+  - only widen the lifetime model when the previous narrower shape is green
+- preserve the safety model:
+  - retire the original pending producer cleanly
+  - then re-seed a new producer only when the next consumer shape is known and
+    safe
+  - avoid "peek and keep alive" style shortcuts
+- pair every translator/backend change with focused coverage:
+  - add one `.S` test that exercises the intended hit and the intended miss
+  - add one checker that proves the wanted `OP:` or `OUT:` codegen shape
+- run focused validation before broader regression:
+  - targeted checker for the new slice
+  - nearby older checkers that could regress
+- after each new feature, run the six CPU SPEC test-size regressions:
+  - `500.perlbench_r`
+  - `502.gcc_r`
+  - `505.mcf_r`
+  - `531.deepsjeng_r`
+  - `541.leela_r`
+  - `557.xz_r`
+- record the outcome in this file before moving to the next slice
+
+Operational notes for the six-test rerun:
+
+- `500.perlbench_r` still has the known wrapper/symlink issue on `test.out`;
+  `makerand.out` is the useful stability signal there
+- `502.gcc_r` should be judged by successful compile/run, not by the stale
+  truncated resident reference `.s`
+- if copied-run `specdiff` cannot resolve `compare.pl`, direct output diffs are
+  acceptable for `505/531/541`
+
+## Reference Docs
+
+These documents are still useful background, but `progress.md` is now the main
+day-to-day handoff:
+
+- [handoff.md](/home/ruoyu/code/qemu_nzcv/qemu10.2/docs/superpowers/archive/handoff.md)
+- [codex_a64_x86_status4_handoff.md](/home/ruoyu/code/qemu_nzcv/qemu10.2/docs/superpowers/archive/codex_a64_x86_status4_handoff.md)
+- [2026-04-01-direct-path-candidate-matrix.md](/home/ruoyu/code/qemu_nzcv/qemu10.2/docs/superpowers/archive/2026-04-01-direct-path-candidate-matrix.md)
+- [2026-04-02-perlbench-test-workload-qemu-wrapper-workaround.md](/home/ruoyu/code/qemu_nzcv/qemu10.2/docs/superpowers/summaries/2026-04-02-perlbench-test-workload-qemu-wrapper-workaround.md)
+- [2026-04-02-spec-cpu2017-seven-test-size-runbook.md](/home/ruoyu/code/qemu_nzcv/qemu10.2/docs/superpowers/summaries/2026-04-02-spec-cpu2017-seven-test-size-runbook.md)
+- [2026-04-02-worktree-closure-and-merge-strategy.md](/home/ruoyu/code/qemu_nzcv/qemu10.2/docs/superpowers/summaries/2026-04-02-worktree-closure-and-merge-strategy.md)
+- [2026-04-01-lazy-compare-phase-2-bcond.md](/home/ruoyu/code/qemu_nzcv/qemu10.2/docs/superpowers/archive/2026-04-01-lazy-compare-phase-2-bcond.md)
+- [2026-04-01-lazy-compare-phase-2-design.md](/home/ruoyu/code/qemu_nzcv/qemu10.2/docs/superpowers/specs/2026-04-01-lazy-compare-phase-2-design.md)

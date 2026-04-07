@@ -15,6 +15,7 @@
  * C_Nn_Om_Ik(...) defines a constraint set with <n + m> outputs and <k>
  * inputs, except that the first <n> outputs must use new registers.
  */
+C_O0_I0
 C_O0_I1(r)
 C_O0_I2(L, L)
 C_O0_I2(qi, r)
@@ -28,6 +29,7 @@ C_O0_I3(r, r, r)
 C_O0_I3(s, L, L)
 C_O0_I4(L, L, L, L)
 C_O0_I4(r, r, ri, ri)
+C_O1_I0(r)
 C_O1_I1(r, 0)
 C_O1_I1(r, L)
 C_O1_I1(r, q)
@@ -36,6 +38,7 @@ C_O1_I1(x, r)
 C_O1_I1(x, x)
 C_O1_I2(a, r, r)
 C_O1_I2(a, r, reZ)
+C_O1_I2(r, r, 0)
 C_O1_I2(q, 0, qi)
 C_O1_I2(q, r, reT)
 C_O1_I2(r, 0, ci)

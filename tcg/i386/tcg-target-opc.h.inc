@@ -38,6 +38,10 @@ DEF(x86_vpshrdv_vec, 1, 3, 0, TCG_OPF_VECTOR)
 DEF(x86_vgf2p8affineqb_vec, 1, 2, 1, TCG_OPF_VECTOR)
 DEF(x86_cmp_brcond, 0, 2, 2, TCG_OPF_BB_END | TCG_OPF_COND_BRANCH | TCG_OPF_INT)
 DEF(x86_cmp_jcc, 0, 2, 2, TCG_OPF_BB_END | TCG_OPF_COND_BRANCH | TCG_OPF_INT)
+DEF(x86_jcc, 0, 0, 2, TCG_OPF_BB_END | TCG_OPF_COND_BRANCH | TCG_OPF_INT)
+DEF(x86_cmov, 1, 2, 1, TCG_OPF_INT)
+DEF(x86_movi_noflags, 1, 0, 1, TCG_OPF_INT)
+DEF(x86_add_noflags, 1, 2, 0, TCG_OPF_INT)
 DEF(x86_cmp_brcond_capture_rawflags, 0, 2, 3,
     TCG_OPF_BB_END | TCG_OPF_COND_BRANCH | TCG_OPF_INT)
 DEF(x86_cmp_jcc_capture_rawflags, 0, 2, 3,

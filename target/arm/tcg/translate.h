@@ -67,6 +67,12 @@ typedef struct A64PendingCCProducer {
     A64PendingCCProducerKind kind;
 } A64PendingCCProducer;
 
+typedef struct A64AdjacentHostFlags {
+    bool valid;
+    bool keep;
+    TCGOp *end;
+} A64AdjacentHostFlags;
+
 typedef struct DisasContext {
     DisasContextBase base;
     CPUARMState *env;
@@ -237,6 +243,8 @@ typedef struct DisasContext {
     uint32_t nv2_redirect_offset;
     /* A64-only pending cc-producer metadata for compare/adc/sbc fast paths. */
     A64PendingCCProducer a64_pending_cc;
+    /* Adjacent host-flags metadata for non-rewindable flag consumers. */
+    A64AdjacentHostFlags a64_adj_host_flags;
     uint32_t a64_raw_cc_op;
     uint32_t a64_cmp_stat_records;
     uint32_t a64_cmp_stat_consumes;

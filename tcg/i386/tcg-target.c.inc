@@ -1769,6 +1769,16 @@ static const TCGOutOpX86CmpJcc outop_x86_cmp_jcc = {
     .out_ri = tgen_x86_cmp_jcci,
 };
 
+static void tgen_x86_jcc(TCGContext *s, int jcc, TCGLabel *label)
+{
+    tcg_out_jxx(s, jcc, label, false);
+}
+
+static const TCGOutOpX86Jcc outop_x86_jcc = {
+    .base.static_constraint = C_O0_I0,
+    .out = tgen_x86_jcc,
+};
+
 static void tcg_out_cmp_capture_jcc(TCGContext *s, int rexw, int jcc,
                                     TCGArg arg1, TCGArg arg2, int const_arg2,
                                     tcg_target_long raw_off,
@@ -2572,6 +2582,56 @@ static void tcg_out_cmov(TCGContext *s, int jcc, int rexw,
 {
     tcg_out_modrm(s, OPC_CMOVCC | jcc | rexw, dest, v1);
 }
+
+static void tgen_x86_cmov(TCGContext *s, TCGType type, int jcc,
+                          TCGReg a0, TCGReg a1)
+{
+    int rexw = type == TCG_TYPE_I32 ? 0 : P_REXW;
+
+    tcg_out_cmov(s, jcc, rexw, a0, a1);
+}
+
+static const TCGOutOpX86Cmov outop_x86_cmov = {
+    .base.static_constraint = C_O1_I2(r, r, 0),
+    .out = tgen_x86_cmov,
+};
+
+static void tgen_x86_movi_noflags(TCGContext *s, TCGType type,
+                                  TCGReg a0, tcg_target_long imm)
+{
+    bool saved_carry_live = s->carry_live;
+
+    s->carry_live = true;
+    tcg_out_movi(s, type, a0, imm);
+    s->carry_live = saved_carry_live;
+}
+
+static const TCGOutOpX86Movi outop_x86_movi_noflags = {
+    .base.static_constraint = C_O1_I0(r),
+    .out = tgen_x86_movi_noflags,
+};
+
+static void tgen_x86_add_noflags(TCGContext *s, TCGType type,
+                                 TCGReg a0, TCGReg a1, TCGReg a2)
+{
+    int rexw = type == TCG_TYPE_I32 ? 0 : P_REXW;
+
+    tcg_out_modrm_sib_offset(s, OPC_LEA + rexw, a0, a1, a2, 0, 0);
+}
+
+static void tgen_x86_addi_noflags(TCGContext *s, TCGType type,
+                                  TCGReg a0, TCGReg a1, tcg_target_long a2)
+{
+    int rexw = type == TCG_TYPE_I32 ? 0 : P_REXW;
+
+    tcg_out_modrm_sib_offset(s, OPC_LEA + rexw, a0, a1, -1, 0, a2);
+}
+
+static const TCGOutOpBinary outop_x86_add_noflags = {
+    .base.static_constraint = C_O1_I2(r, r, re),
+    .out_rrr = tgen_x86_add_noflags,
+    .out_rri = tgen_x86_addi_noflags,
+};
 
 static void tgen_movcond(TCGContext *s, TCGType type, TCGCond cond,
                          TCGReg dest, TCGReg c1, TCGArg c2, bool const_c2,
@@ -4870,6 +4930,14 @@ tcg_target_op_def(TCGOpcode op, TCGType type, unsigned flags)
 
     case INDEX_op_x86_cmp_jcc:
         return C_O0_I2(r, reT);
+    case INDEX_op_x86_jcc:
+        return C_O0_I0;
+    case INDEX_op_x86_cmov:
+        return C_O1_I2(r, r, 0);
+    case INDEX_op_x86_movi_noflags:
+        return C_O1_I0(r);
+    case INDEX_op_x86_add_noflags:
+        return C_O1_I2(r, r, re);
 
     case INDEX_op_x86_cmp_brcond_capture_rawflags:
     case INDEX_op_x86_cmp_jcc_capture_rawflags:
