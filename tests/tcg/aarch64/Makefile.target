@@ -102,6 +102,51 @@ cmp-csel-ccmp-chain-host-direct: LDFLAGS += -nostdlib
 run-cmp-csel-ccmp-chain-host-direct-codegen: cmp-csel-ccmp-chain-host-direct
 	$(call run-test,$@,bash $(AARCH64_SRC)/check-cmp-csel-ccmp-chain-host-direct.sh "$(QEMU)" $<)
 
+AARCH64_TESTS += cmp-csel-csel-chain-host-direct
+cmp-csel-csel-chain-host-direct: LDFLAGS += -nostdlib
+run-cmp-csel-csel-chain-host-direct-codegen: cmp-csel-csel-chain-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-cmp-csel-csel-chain-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += cmp-ccmp-bcond-chain-host-direct
+cmp-ccmp-bcond-chain-host-direct: LDFLAGS += -nostdlib
+run-cmp-ccmp-bcond-chain-host-direct-codegen: cmp-ccmp-bcond-chain-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-cmp-ccmp-bcond-chain-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += cmp-ccmp-csel-bcond-chain-host-direct
+cmp-ccmp-csel-bcond-chain-host-direct: LDFLAGS += -nostdlib
+run-cmp-ccmp-csel-bcond-chain-host-direct-codegen: cmp-ccmp-csel-bcond-chain-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-cmp-ccmp-csel-bcond-chain-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += cmp-ccmp-csel-csel-chain-host-direct
+cmp-ccmp-csel-csel-chain-host-direct: LDFLAGS += -nostdlib
+run-cmp-ccmp-csel-csel-chain-host-direct-codegen: cmp-ccmp-csel-csel-chain-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-cmp-ccmp-csel-csel-chain-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += cmp-ccmp-csel-ccmp-chain-host-direct
+cmp-ccmp-csel-ccmp-chain-host-direct: LDFLAGS += -nostdlib
+run-cmp-ccmp-csel-ccmp-chain-host-direct-codegen: cmp-ccmp-csel-ccmp-chain-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-cmp-ccmp-csel-ccmp-chain-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += cmp-ccmp-ccmp-chain-host-direct
+cmp-ccmp-ccmp-chain-host-direct: LDFLAGS += -nostdlib
+run-cmp-ccmp-ccmp-chain-host-direct-codegen: cmp-ccmp-ccmp-chain-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-cmp-ccmp-ccmp-chain-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += cmp-ccmp-ccmp-csel-bcond-chain-host-direct
+cmp-ccmp-ccmp-csel-bcond-chain-host-direct: LDFLAGS += -nostdlib
+run-cmp-ccmp-ccmp-csel-bcond-chain-host-direct-codegen: cmp-ccmp-ccmp-csel-bcond-chain-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-cmp-ccmp-ccmp-csel-bcond-chain-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += cmp-ccmp-ccmp-ccmp-chain-host-direct
+cmp-ccmp-ccmp-ccmp-chain-host-direct: LDFLAGS += -nostdlib
+run-cmp-ccmp-ccmp-ccmp-chain-host-direct-codegen: cmp-ccmp-ccmp-ccmp-chain-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-cmp-ccmp-ccmp-ccmp-chain-host-direct.sh "$(QEMU)" $<)
+
+AARCH64_TESTS += cmp-ccmp-ccmp-ccmp-csel-bcond-chain-host-direct
+cmp-ccmp-ccmp-ccmp-csel-bcond-chain-host-direct: LDFLAGS += -nostdlib
+run-cmp-ccmp-ccmp-ccmp-csel-bcond-chain-host-direct-codegen: cmp-ccmp-ccmp-ccmp-csel-bcond-chain-host-direct
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-cmp-ccmp-ccmp-ccmp-csel-bcond-chain-host-direct.sh "$(QEMU)" $<)
+
 AARCH64_TESTS += cmp-csel-gap-host-direct
 cmp-csel-gap-host-direct: LDFLAGS += -nostdlib
 run-cmp-csel-gap-host-direct-codegen: cmp-csel-gap-host-direct

@@ -47,6 +47,8 @@ typedef enum A64PendingCCProducerKind {
     A64_PENDING_CC_REWINDABLE_CMP,
     A64_PENDING_CC_MATERIALIZED_ADD,
     A64_PENDING_CC_MATERIALIZED_SUB,
+    A64_PENDING_CC_CONDITIONAL_ADD,
+    A64_PENDING_CC_CONDITIONAL_SUB,
 } A64PendingCCProducerKind;
 
 typedef struct A64PendingCCProducer {
@@ -56,6 +58,7 @@ typedef struct A64PendingCCProducer {
     TCGv_i64 lhs;
     TCGv_i64 rhs;
     TCGv_i32 carry;
+    TCGv_i32 selector;
     TCGOp *rewind;
     TCGOp *end;
     target_ulong pc;
@@ -63,6 +66,7 @@ typedef struct A64PendingCCProducer {
     bool consumed;
     const char *consumer;
     uint32_t cc_op;
+    uint8_t literal_nzcv;
     uint8_t gap_insns;
     A64PendingCCProducerKind kind;
 } A64PendingCCProducer;
