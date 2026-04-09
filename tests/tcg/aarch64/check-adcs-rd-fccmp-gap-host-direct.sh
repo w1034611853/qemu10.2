@@ -93,12 +93,10 @@ assert_no_use()
 }
 
 assert_record "adcs rd fccmp true gap1" adcs_rd_fccmp_true_gap1_producer
-assert_use "adcs rd fccmp true gap1" \
-    adcs_rd_fccmp_true_gap1_producer adcs_rd_fccmp_true_gap1_consumer 2
+assert_no_use "adcs rd fccmp true gap1" adcs_rd_fccmp_true_gap1_producer
 
 assert_record "adcs rd fccmp false gap4" adcs_rd_fccmp_false_gap4_producer
-assert_use "adcs rd fccmp false gap4" \
-    adcs_rd_fccmp_false_gap4_producer adcs_rd_fccmp_false_gap4_consumer 5
+assert_no_use "adcs rd fccmp false gap4" adcs_rd_fccmp_false_gap4_producer
 
 assert_no_use "adcs rd fccmp bad gap" adcs_rd_fccmp_bad_gap_producer
 

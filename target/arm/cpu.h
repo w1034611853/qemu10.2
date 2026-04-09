@@ -2528,6 +2528,7 @@ FIELD(TBFLAG_A64, GCS_EN, 41, 1)
 FIELD(TBFLAG_A64, GCS_RVCEN, 42, 1)
 FIELD(TBFLAG_A64, GCSSTR_EL, 43, 2)
 FIELD(TBFLAG_A64, X86_FLAGS_VALID, 45, 2)  /* Not cached. */
+FIELD(TBFLAG_A64, X86_CC_OP, 47, 4)        /* Not cached. */
 
 /*
  * Helpers for using the above. Note that only the A64 accessors use

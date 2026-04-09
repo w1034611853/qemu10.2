@@ -123,6 +123,18 @@ assert_use()
         "$log" || die "expected cmp-pending use for $label"
 }
 
+assert_no_use()
+{
+    local label=$1
+    local producer_sym=$2
+    local producer_addr
+
+    producer_addr=$(sym_addr "$producer_sym")
+    if rg -q "A64 cmp-pending (use|peek) producer_pc=0x${producer_addr}\\b" "$log"; then
+        die "unexpected cmp-pending use for $label"
+    fi
+}
+
 assert_retire()
 {
     local label=$1
@@ -172,8 +184,7 @@ assert_chain_positive()
     local branch_sym=$4
 
     assert_record "$label old producer" "$producer_sym"
-    assert_use "$label old producer" "$producer_sym" "$ccmp_sym" 2 "CCMP"
-    assert_retire "$label old producer" "$producer_sym" "$ccmp_sym" 2 "CCMP"
+    assert_no_use "$label old producer" "$producer_sym"
 
     assert_record "$label new producer" "$ccmp_sym"
     assert_use "$label new producer" "$ccmp_sym" "$branch_sym" 1 \
@@ -189,8 +200,7 @@ assert_gap_fallback()
     local ccmp_sym=$3
 
     assert_record "$label old producer" "$producer_sym"
-    assert_use "$label old producer" "$producer_sym" "$ccmp_sym" 2 "CCMP"
-    assert_retire "$label old producer" "$producer_sym" "$ccmp_sym" 2 "CCMP"
+    assert_no_use "$label old producer" "$producer_sym"
     assert_no_record "$label new producer" "$ccmp_sym"
     assert_case_contains "$label ccmp block" "$ccmp_sym" 'mov_i32 x86_raw_flags'
 }

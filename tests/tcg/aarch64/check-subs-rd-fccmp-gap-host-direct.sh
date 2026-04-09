@@ -96,19 +96,17 @@ assert_positive()
 {
     local label=$1
     local producer_sym=$2
-    local consumer_sym=$3
-    local age=$4
 
     assert_record "$label" "$producer_sym"
-    assert_use "$label" "$producer_sym" "$consumer_sym" "$age"
+    assert_no_use "$label" "$producer_sym"
 }
 
 assert_positive "subs rd fccmp true gap1" \
-    subs_rd_fccmp_true_gap1_producer subs_rd_fccmp_true_gap1_consumer 2
+    subs_rd_fccmp_true_gap1_producer
 assert_positive "subs rd fccmp false gap4" \
-    subs_rd_fccmp_false_gap4_producer subs_rd_fccmp_false_gap4_consumer 5
+    subs_rd_fccmp_false_gap4_producer
 assert_positive "subs rd fccmp true gap8" \
-    subs_rd_fccmp_true_gap8_producer subs_rd_fccmp_true_gap8_consumer 9
+    subs_rd_fccmp_true_gap8_producer
 
 assert_no_use "subs rd fccmp bad gap" subs_rd_fccmp_bad_gap_producer
 

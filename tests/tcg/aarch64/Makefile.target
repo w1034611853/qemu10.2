@@ -46,6 +46,9 @@ run-nzcv-status4: QEMU_OPTS += -cpu max
 run-nzcv-status4: nzcv-status4
 	$(call run-test,$<,$(QEMU) $(QEMU_OPTS) $<)
 	$(call diff-out,$<,$(AARCH64_SRC)/nzcv-status4.out)
+
+run-nzcv-status4-raw-ccop-specialization: nzcv-status4
+	$(call run-test,$@,bash $(AARCH64_SRC)/check-nzcv-status4-raw-ccop-specialization.sh "$(QEMU)" $<)
 endif
 
 AARCH64_TESTS += cmpstress-o3

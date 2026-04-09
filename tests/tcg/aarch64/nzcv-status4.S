@@ -2006,6 +2006,23 @@ tbb_ok:
     expect_reg_imm x2, 1, 0xbc
     expect_reg_imm x7, 31, 0xbc
 
+    /* 0xbd: SUBS rd + gap + FCSEL(mi) must fall back to current main flags */
+    mov     x0, #0
+    cmp     x0, #0            /* Seed stale N = 0 in prior flags state */
+    mov     x0, #0
+    mov     x1, #1
+    subs    x9, x0, x1        /* New producer should set N = 1 */
+    nop
+    fmov    d2, #2.0
+    fmov    d3, #0.5
+    fcsel   d4, d2, d3, mi
+    fmov    x2, d4
+    ldr     x3, =0x4000000000000000
+    movn    x10, #0
+    expect_nzcv 0x8, 0xbd
+    expect_reg_reg x9, x10, 0xbd
+    expect_reg_reg x2, x3, 0xbd
+
     b       after_shared_consumers
 
 shared_nzcv_consumer:

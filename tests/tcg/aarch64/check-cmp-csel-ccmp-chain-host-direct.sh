@@ -92,6 +92,18 @@ assert_use()
         "$log" || die "expected cmp-pending use for $label"
 }
 
+assert_no_use()
+{
+    local label=$1
+    local producer_sym=$2
+    local producer_addr
+
+    producer_addr=$(sym_addr "$producer_sym")
+    if rg -q "A64 cmp-pending (use|peek) producer_pc=0x${producer_addr}\\b" "$log"; then
+        die "unexpected cmp-pending use for $label"
+    fi
+}
+
 assert_retire()
 {
     local label=$1
@@ -120,7 +132,7 @@ assert_chain_positive()
     assert_retire "$label old producer" "$producer_sym" "$csel_sym" 2 "CSEL-pending"
 
     assert_record "$label reseeded producer" "$csel_sym"
-    assert_use "$label reseeded producer" "$csel_sym" "$ccmp_sym" 1 "CCMP"
+    assert_no_use "$label reseeded producer" "$csel_sym"
 }
 
 assert_chain_gap_no_reseed()

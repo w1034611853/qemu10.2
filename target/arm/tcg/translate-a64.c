@@ -624,12 +624,6 @@ static inline void a64_invalidate_x86_flags(DisasContext *s)
     s->a64_raw_cc_op = A64_X86_CC_INVALID;
 }
 
-static inline void a64_note_flags_unknown(DisasContext *s)
-{
-    s->a64_flags_rep = A64_FLAGS_REP_UNKNOWN;
-    s->a64_raw_cc_op = A64_X86_CC_INVALID;
-}
-
 static inline void a64_note_flags_split(DisasContext *s)
 {
     s->a64_flags_rep = A64_FLAGS_REP_SPLIT;
@@ -689,35 +683,13 @@ static void a64_gen_sub_nzcv_bits(int sf, TCGv_i64 dest,
                                   TCGv_i32 c, TCGv_i32 v,
                                   TCGv_i64 t0, TCGv_i64 t1);
 
-static void a64_raw_flags_get_c_runtime(TCGv_i32 dst)
-{
-    TCGv_i32 invert = tcg_temp_new_i32();
-    TCGv_i32 tmp = tcg_temp_new_i32();
-
-    a64_extract_raw_flags_bit(dst, 8);
-    tcg_gen_setcondi_i32(TCG_COND_EQ, invert, cpu_x86_cc_op,
-                         A64_X86_CC_SUB32);
-    tcg_gen_setcondi_i32(TCG_COND_EQ, tmp, cpu_x86_cc_op,
-                         A64_X86_CC_SUB64);
-    tcg_gen_or_i32(invert, invert, tmp);
-    tcg_gen_setcondi_i32(TCG_COND_EQ, tmp, cpu_x86_cc_op,
-                         A64_X86_CC_SBC32);
-    tcg_gen_or_i32(invert, invert, tmp);
-    tcg_gen_setcondi_i32(TCG_COND_EQ, tmp, cpu_x86_cc_op,
-                         A64_X86_CC_SBC64);
-    tcg_gen_or_i32(invert, invert, tmp);
-    tcg_gen_xor_i32(dst, dst, invert);
-}
-
 static void a64_raw_flags_get_c(DisasContext *s, TCGv_i32 dst)
 {
-    if (s->a64_raw_cc_op == A64_X86_CC_INVALID) {
-        a64_raw_flags_get_c_runtime(dst);
-    } else {
-        a64_extract_raw_flags_bit(dst, 8);
-        if (a64_cc_op_carry_is_inverted(s->a64_raw_cc_op)) {
-            tcg_gen_xori_i32(dst, dst, 1);
-        }
+    tcg_debug_assert(s->a64_raw_cc_op != A64_X86_CC_INVALID);
+
+    a64_extract_raw_flags_bit(dst, 8);
+    if (a64_cc_op_carry_is_inverted(s->a64_raw_cc_op)) {
+        tcg_gen_xori_i32(dst, dst, 1);
     }
 }
 
@@ -730,26 +702,8 @@ static void a64_get_current_carry_flag(DisasContext *s, TCGv_i32 dst)
     case A64_FLAGS_REP_RAW:
         a64_raw_flags_get_c(s, dst);
         return;
-    case A64_FLAGS_REP_UNKNOWN:
     default:
-        {
-            TCGLabel *label_raw = gen_new_label();
-            TCGLabel *label_split = gen_new_label();
-            TCGLabel *label_done = gen_new_label();
-
-            tcg_gen_brcondi_i32(TCG_COND_EQ, cpu_x86_flags_valid,
-                                A64_X86_FLAGS_RAW, label_raw);
-            tcg_gen_br(label_split);
-
-            gen_set_label(label_raw);
-            a64_raw_flags_get_c_runtime(dst);
-            tcg_gen_br(label_done);
-
-            gen_set_label(label_split);
-            tcg_gen_mov_i32(dst, cpu_CF);
-            gen_set_label(label_done);
-            return;
-        }
+        g_assert_not_reached();
     }
 }
 
@@ -1608,33 +1562,8 @@ static void a64_get_current_nzcv_bits(DisasContext *s, TCGv_i32 n, TCGv_i32 z,
         a64_raw_flags_get_c(s, c);
         a64_extract_raw_flags_bit(v, 0);
         return;
-    case A64_FLAGS_REP_UNKNOWN:
     default:
-        {
-            TCGLabel *label_raw = gen_new_label();
-            TCGLabel *label_split = gen_new_label();
-            TCGLabel *label_done = gen_new_label();
-
-            tcg_gen_brcondi_i32(TCG_COND_EQ, cpu_x86_flags_valid,
-                                A64_X86_FLAGS_RAW, label_raw);
-            tcg_gen_br(label_split);
-
-            gen_set_label(label_raw);
-            a64_extract_raw_flags_bit(n, 15);
-            a64_extract_raw_flags_bit(z, 14);
-            a64_raw_flags_get_c_runtime(c);
-            a64_extract_raw_flags_bit(v, 0);
-            tcg_gen_br(label_done);
-
-            gen_set_label(label_split);
-            a64_split_flags_get_n(n);
-            a64_split_flags_get_z(z);
-            a64_split_flags_get_c(c);
-            a64_split_flags_get_v(v);
-
-            gen_set_label(label_done);
-            return;
-        }
+        g_assert_not_reached();
     }
 }
 
@@ -1665,6 +1594,8 @@ static void a64_write_raw_flags_from_bits(DisasContext *s, TCGv_i32 n,
 static void a64_test_cc_rawflags(DisasContext *s, DisasCompare64 *c64, int cc)
 {
     TCGv_i32 tmp = tcg_temp_new_i32();
+
+    tcg_debug_assert(s->a64_raw_cc_op != A64_X86_CC_INVALID);
 
     switch (cc) {
     case 0: /* eq */
@@ -1701,8 +1632,7 @@ static void a64_test_cc_rawflags(DisasContext *s, DisasCompare64 *c64, int cc)
         break;
     case 8: /* hi */
         tcg_gen_andi_i32(tmp, cpu_x86_raw_flags, 0x4100);
-        if (s->a64_raw_cc_op == A64_X86_CC_INVALID ||
-            !a64_cc_op_carry_is_inverted(s->a64_raw_cc_op)) {
+        if (!a64_cc_op_carry_is_inverted(s->a64_raw_cc_op)) {
             TCGv_i32 c = tcg_temp_new_i32();
             TCGv_i32 nz = tcg_temp_new_i32();
 
@@ -1717,8 +1647,7 @@ static void a64_test_cc_rawflags(DisasContext *s, DisasCompare64 *c64, int cc)
         break;
     case 9: /* ls */
         tcg_gen_andi_i32(tmp, cpu_x86_raw_flags, 0x4100);
-        if (s->a64_raw_cc_op == A64_X86_CC_INVALID ||
-            !a64_cc_op_carry_is_inverted(s->a64_raw_cc_op)) {
+        if (!a64_cc_op_carry_is_inverted(s->a64_raw_cc_op)) {
             TCGv_i32 c = tcg_temp_new_i32();
             TCGv_i32 z = tcg_temp_new_i32();
 
@@ -1943,36 +1872,6 @@ static bool a64_bcond_cc_supported_for_add_direct(int cc)
 }
 #endif
 
-static bool a64_try_set_cmp_cond_bool_i32(DisasContext *s, int cc, TCGv_i32 dst)
-{
-    TCGCond cond;
-
-    if (!s->a64_pending_cc.valid ||
-        s->a64_pending_cc.kind != A64_PENDING_CC_REWINDABLE_CMP ||
-        a64_pending_cc_has_live_split_flags(s) ||
-        !a64_cmp_cond_to_tcg(&cond, cc)) {
-        return false;
-    }
-
-    a64_cmp_note_consume(s, "cc-bool");
-
-    if (s->a64_pending_cc.sf) {
-        TCGv_i64 tmp = tcg_temp_new_i64();
-
-        tcg_gen_setcond_i64(cond, tmp, s->a64_pending_cc.lhs,
-                            s->a64_pending_cc.rhs);
-        tcg_gen_extrl_i64_i32(dst, tmp);
-    } else {
-        TCGv_i32 lhs = tcg_temp_new_i32();
-        TCGv_i32 rhs = tcg_temp_new_i32();
-
-        tcg_gen_extrl_i64_i32(lhs, s->a64_pending_cc.lhs);
-        tcg_gen_extrl_i64_i32(rhs, s->a64_pending_cc.rhs);
-        tcg_gen_setcond_i32(cond, dst, lhs, rhs);
-    }
-    return true;
-}
-
 static bool a64_try_peek_cmp_cond_bool_i32(DisasContext *s, int cc,
                                            TCGv_i32 dst,
                                            const char *consumer)
@@ -2006,11 +1905,10 @@ static bool a64_try_peek_cmp_cond_bool_i32(DisasContext *s, int cc,
     return true;
 }
 
-static void a64_retire_pending_cc_to_split(DisasContext *s, TCGv_i32 n,
-                                           TCGv_i32 z, TCGv_i32 c,
-                                           TCGv_i32 v)
+static void a64_set_split_flags_from_bits(DisasContext *s, TCGv_i32 n,
+                                          TCGv_i32 z, TCGv_i32 c,
+                                          TCGv_i32 v)
 {
-    tcg_debug_assert(s->a64_pending_cc.valid);
     a64_invalidate_x86_flags(s);
     a64_note_flags_split(s);
 
@@ -2018,7 +1916,14 @@ static void a64_retire_pending_cc_to_split(DisasContext *s, TCGv_i32 n,
     tcg_gen_xori_i32(cpu_ZF, z, 1);
     tcg_gen_mov_i32(cpu_CF, c);
     tcg_gen_shli_i32(cpu_VF, v, 31);
+}
 
+static void a64_retire_pending_cc_to_split(DisasContext *s, TCGv_i32 n,
+                                           TCGv_i32 z, TCGv_i32 c,
+                                           TCGv_i32 v)
+{
+    tcg_debug_assert(s->a64_pending_cc.valid);
+    a64_set_split_flags_from_bits(s, n, z, c, v);
     a64_cmp_note_drop(s);
     a64_clear_pending_cc_producer(s);
 }
@@ -2287,46 +2192,6 @@ static bool a64_try_consume_conditional_cc_cond_bool_i32_to_split(
     return true;
 }
 
-static bool a64_try_set_conditional_cc_cond_bool_i32(DisasContext *s, int cc,
-                                                     TCGv_i32 dst)
-{
-    TCGv_i32 calc_n, calc_z, calc_c, calc_v;
-    TCGv_i32 calc_match, zero;
-
-    if (!a64_pending_cc_is_conditional_materialized(s) ||
-        s->a64_pending_cc.rewind != NULL ||
-        a64_pending_cc_has_live_split_flags(s)) {
-        return false;
-    }
-
-    calc_n = tcg_temp_new_i32();
-    calc_z = tcg_temp_new_i32();
-    calc_c = tcg_temp_new_i32();
-    calc_v = tcg_temp_new_i32();
-    calc_match = tcg_temp_new_i32();
-    zero = tcg_constant_i32(0);
-
-    if (s->a64_pending_cc.kind == A64_PENDING_CC_CONDITIONAL_ADD) {
-        a64_gen_add_nzcv_bits(s->a64_pending_cc.sf, tcg_temp_new_i64(),
-                              calc_n, calc_z, calc_c, calc_v,
-                              s->a64_pending_cc.lhs, s->a64_pending_cc.rhs);
-    } else {
-        a64_gen_sub_nzcv_bits(s->a64_pending_cc.sf, tcg_temp_new_i64(),
-                              calc_n, calc_z, calc_c, calc_v,
-                              s->a64_pending_cc.lhs, s->a64_pending_cc.rhs);
-    }
-
-    a64_set_cond_bool_from_nzcv_bits(calc_match, cc, calc_n, calc_z, calc_c,
-                                     calc_v);
-    tcg_gen_movcond_i32(TCG_COND_NE, dst, s->a64_pending_cc.selector, zero,
-                        calc_match,
-                        tcg_constant_i32(
-                            a64_nzcv_literal_matches_cond(
-                                cc, s->a64_pending_cc.literal_nzcv)));
-    a64_cmp_note_consume(s, "cc-bool");
-    return true;
-}
-
 static void a64_set_cond_bool_from_nzcv_bits(TCGv_i32 dst, int cc,
                                              TCGv_i32 n, TCGv_i32 z,
                                              TCGv_i32 c, TCGv_i32 v)
@@ -2407,30 +2272,6 @@ static void a64_set_cond_bool_from_nzcv_bits(TCGv_i32 dst, int cc,
     }
 }
 
-static bool a64_try_set_add_cond_bool_i32(DisasContext *s, int cc, TCGv_i32 dst)
-{
-    TCGv_i32 n, z, c, v;
-
-    if (!s->a64_pending_cc.valid ||
-        s->a64_pending_cc.kind != A64_PENDING_CC_MATERIALIZED_ADD ||
-        a64_pending_cc_has_live_split_flags(s) ||
-        (s->a64_pending_cc.cc_op != (s->a64_pending_cc.sf ? A64_X86_CC_ADD64
-                                                          : A64_X86_CC_ADD32))) {
-        return false;
-    }
-
-    n = tcg_temp_new_i32();
-    z = tcg_temp_new_i32();
-    c = tcg_temp_new_i32();
-    v = tcg_temp_new_i32();
-    a64_gen_add_nzcv_bits(s->a64_pending_cc.sf, tcg_temp_new_i64(),
-                          n, z, c, v,
-                          s->a64_pending_cc.lhs, s->a64_pending_cc.rhs);
-    a64_set_cond_bool_from_nzcv_bits(dst, cc, n, z, c, v);
-    a64_cmp_note_consume(s, "add-cc-bool");
-    return true;
-}
-
 static bool a64_try_peek_add_cond_bool_i32(DisasContext *s, int cc,
                                            TCGv_i32 dst,
                                            const char *consumer)
@@ -2492,21 +2333,11 @@ static void a64_test_cc_cmp_to_bool_i32(TCGv_i32 dst, DisasCompare64 *c64)
 }
 
 
-static TCGv_i32 a64_test_cc_bool_i32(DisasContext *s, int cc)
+static TCGv_i32 a64_test_cc_bool_i32_main(DisasContext *s, int cc)
 {
     TCGv_i32 ret = tcg_temp_new_i32();
     DisasCompare c32;
     DisasCompare64 c64;
-
-    if (a64_try_set_cmp_cond_bool_i32(s, cc, ret)) {
-        return ret;
-    }
-    if (a64_try_set_conditional_cc_cond_bool_i32(s, cc, ret)) {
-        return ret;
-    }
-    if (a64_try_set_add_cond_bool_i32(s, cc, ret)) {
-        return ret;
-    }
 
     switch (s->a64_flags_rep) {
     case A64_FLAGS_REP_SPLIT:
@@ -2517,29 +2348,8 @@ static TCGv_i32 a64_test_cc_bool_i32(DisasContext *s, int cc)
         a64_test_cc_rawflags(s, &c64, cc);
         a64_test_cc_cmp_to_bool_i32(ret, &c64);
         return ret;
-    case A64_FLAGS_REP_UNKNOWN:
     default:
-        {
-            TCGLabel *label_raw = gen_new_label();
-            TCGLabel *label_fallback = gen_new_label();
-            TCGLabel *label_done = gen_new_label();
-
-            tcg_gen_brcondi_i32(TCG_COND_EQ, cpu_x86_flags_valid,
-                                A64_X86_FLAGS_RAW, label_raw);
-            tcg_gen_br(label_fallback);
-
-            gen_set_label(label_raw);
-            a64_test_cc_rawflags(s, &c64, cc);
-            a64_test_cc_cmp_to_bool_i32(ret, &c64);
-            tcg_gen_br(label_done);
-
-            gen_set_label(label_fallback);
-            arm_test_cc(&c32, cc);
-            tcg_gen_setcondi_i32(c32.cond, ret, c32.value, 0);
-
-            gen_set_label(label_done);
-            return ret;
-        }
+        g_assert_not_reached();
     }
 }
 
@@ -4340,7 +4150,9 @@ static bool __attribute__((unused)) a64_try_emit_x86_cmp_sbcs(DisasContext *s, b
 
 static void a64_test_cc(DisasContext *s, DisasCompare64 *c64, int cc)
 {
-    if (s->a64_flags_rep == A64_FLAGS_REP_SPLIT) {
+    switch (s->a64_flags_rep) {
+    case A64_FLAGS_REP_SPLIT:
+    {
         DisasCompare c32;
 
         arm_test_cc(&c32, cc);
@@ -4349,14 +4161,12 @@ static void a64_test_cc(DisasContext *s, DisasCompare64 *c64, int cc)
         tcg_gen_ext_i32_i64(c64->value, c32.value);
         return;
     }
-    if (s->a64_flags_rep == A64_FLAGS_REP_RAW) {
+    case A64_FLAGS_REP_RAW:
         a64_test_cc_rawflags(s, c64, cc);
         return;
+    default:
+        g_assert_not_reached();
     }
-
-    c64->cond = TCG_COND_NE;
-    c64->value = tcg_temp_new_i64();
-    tcg_gen_extu_i32_i64(c64->value, a64_test_cc_bool_i32(s, cc));
 }
 
 static void gen_rebuild_hflags(DisasContext *s)
@@ -5226,6 +5036,19 @@ static void gen_sub_CC(DisasContext *s, int sf, TCGv_i64 dest,
         gen_sub64_CC_split(dest, t0, t1);
     } else {
         gen_sub32_CC_split(dest, t0, t1);
+    }
+}
+
+static void a64_publish_addsub_main_flags(DisasContext *s, bool sf,
+                                          TCGv_i64 lhs, TCGv_i64 rhs,
+                                          bool sub_op)
+{
+    TCGv_i64 discarded = tcg_temp_new_i64();
+
+    if (sub_op) {
+        gen_sub_CC(s, sf, discarded, lhs, rhs, true);
+    } else {
+        gen_add_CC(s, sf, discarded, lhs, rhs, true);
     }
 }
 
@@ -6814,27 +6637,8 @@ static void gen_get_nzcv(DisasContext *s, TCGv_i64 tcg_rt)
     case A64_FLAGS_REP_SPLIT:
         gen_get_nzcv_split(nzcv);
         break;
-    case A64_FLAGS_REP_UNKNOWN:
     default:
-        {
-            TCGLabel *label_raw = gen_new_label();
-            TCGLabel *label_split = gen_new_label();
-            TCGLabel *label_done = gen_new_label();
-
-            tcg_gen_brcondi_i32(TCG_COND_EQ, cpu_x86_flags_valid,
-                                A64_X86_FLAGS_RAW, label_raw);
-            tcg_gen_br(label_split);
-
-            gen_set_label(label_raw);
-            gen_get_nzcv_raw(s, nzcv);
-            tcg_gen_br(label_done);
-
-            gen_set_label(label_split);
-            gen_get_nzcv_split(nzcv);
-
-            gen_set_label(label_done);
-        }
-        break;
+        g_assert_not_reached();
     }
     tcg_gen_extu_i32_i64(tcg_rt, nzcv);
 }
@@ -9449,6 +9253,10 @@ static bool do_addsub_imm(DisasContext *s, arg_rri_sf *a,
             kind = A64_PENDING_CC_MATERIALIZED_SUB;
         }
         s->a64_pending_cc.kind = kind;
+        if (lazy_ccmp_cmp || lazy_fccmp_cmp) {
+            a64_publish_addsub_main_flags(s, a->sf, tcg_rn, tcg_pending_imm,
+                                          sub_op);
+        }
     }
     return true;
 }
@@ -12382,22 +12190,14 @@ static bool trans_FCCMP(DisasContext *s, arg_FCCMP *a)
 {
     TCGLabel *label_continue = NULL;
     int check = fp_access_check_scalar_hsd(s, a->esz);
-    TCGCond adj_cond;
 
     if (check <= 0) {
         return check == 0;
     }
 
-    if (a->cond >= 0x0e || a64_cmp_cond_to_tcg(&adj_cond, a->cond)) {
-        a64_try_rewind_adjacent_cmp(s, "FCCMP");
-    }
-    if (s->a64_pending_cc.valid) {
-        a64_cmp_note_consume(s, "FCCMP");
-    }
-
     if (a->cond < 0x0e) { /* not always */
         TCGLabel *label_match = gen_new_label();
-        TCGv_i32 cond = a64_test_cc_bool_i32(s, a->cond);
+        TCGv_i32 cond = a64_test_cc_bool_i32_main(s, a->cond);
         label_continue = gen_new_label();
         tcg_gen_brcondi_i32(TCG_COND_NE, cond, 0, label_match);
         /* nomatch: */
@@ -13618,6 +13418,9 @@ static bool do_addsub_ext(DisasContext *s, arg_addsub_ext *a,
             kind = A64_PENDING_CC_MATERIALIZED_SUB;
         }
         s->a64_pending_cc.kind = kind;
+        if (lazy_ccmp_cmp || lazy_fccmp_cmp) {
+            a64_publish_addsub_main_flags(s, a->sf, tcg_rn, tcg_rm, sub_op);
+        }
     }
     return true;
 }
@@ -13881,6 +13684,9 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
             kind = A64_PENDING_CC_MATERIALIZED_SUB;
         }
         s->a64_pending_cc.kind = kind;
+        if (lazy_ccmp_cmp || lazy_fccmp_cmp) {
+            a64_publish_addsub_main_flags(s, a->sf, tcg_rn, tcg_rm, sub_op);
+        }
     }
     return true;
 }
@@ -14271,14 +14077,8 @@ TRANS_FEAT(SETF16, aa64_condm_4, do_setf, a->rn, 16)
 /* CCMP, CCMN */
 static bool trans_CCMP(DisasContext *s, arg_CCMP *a)
 {
-    TCGCond adj_cond;
     bool keep_ccmp_pending = false;
     uint8_t gap_insns = 0;
-
-    if (a->cond >= 0x0e || a64_cmp_cond_to_tcg(&adj_cond, a->cond)) {
-        a64_try_rewind_adjacent_cmp(s, "CCMP");
-        a64_cmp_note_consume(s, "CCMP");
-    }
 
     if (a64_try_emit_x86_logic_ccmp(s, a)) {
         return true;
@@ -14291,7 +14091,7 @@ static bool trans_CCMP(DisasContext *s, arg_CCMP *a)
     }
 
     {
-        TCGv_i32 cond_true = a64_test_cc_bool_i32(s, a->cond);
+        TCGv_i32 cond_true = a64_test_cc_bool_i32_main(s, a->cond);
         TCGv_i32 calc_n = tcg_temp_new_i32();
         TCGv_i32 calc_z = tcg_temp_new_i32();
         TCGv_i32 calc_c = tcg_temp_new_i32();
@@ -14314,28 +14114,6 @@ static bool trans_CCMP(DisasContext *s, arg_CCMP *a)
             a64_gen_add_nzcv_bits(a->sf, tcg_temp_new_i64(),
                                   calc_n, calc_z, calc_c, calc_v,
                                   tcg_rn, tcg_y);
-        }
-
-        if (keep_ccmp_pending) {
-            /*
-             * Extend the CCMP/CCMN producer stage by one more safe hop:
-             * keep the conditional add/sub result symbolic when the very next
-             * guest instruction is either a plain B.cond, a plain CSEL/CS*
-             * consumer, or another plain CCMP/CCMN. The next slice can then
-             * decide whether to terminate at split flags or re-seed one more
-             * adjacent-only pending producer.
-             */
-            if (s->a64_pending_cc.valid && s->a64_pending_cc.consumed) {
-                a64_retire_current_pending_cc(s);
-            }
-            a64_invalidate_x86_flags(s);
-            a64_note_flags_unknown(s);
-            a64_record_conditional_cc_for_bcond(
-                s, a->sf, tcg_rn, tcg_y, cond_true, tcg_last_op(),
-                a->op ? (a->sf ? A64_X86_CC_SUB64 : A64_X86_CC_SUB32)
-                      : (a->sf ? A64_X86_CC_ADD64 : A64_X86_CC_ADD32),
-                a->nzcv);
-            return true;
         }
 
         {
@@ -14361,6 +14139,26 @@ static bool trans_CCMP(DisasContext *s, arg_CCMP *a)
                                 tcg_constant_i32((a->nzcv >> 1) & 1), calc_c);
             tcg_gen_movcond_i32(TCG_COND_NE, out_v, tcg_t0, zero,
                                 tcg_constant_i32(a->nzcv & 1), calc_v);
+
+            if (keep_ccmp_pending) {
+                /*
+                 * Keep one more conditional producer hop for adjacent
+                 * direct-consumer chains, but also publish a durable split
+                 * representation so generic readers never fall back to the
+                 * UNKNOWN runtime-dispatch path on a miss.
+                 */
+                if (s->a64_pending_cc.valid && s->a64_pending_cc.consumed) {
+                    a64_retire_current_pending_cc(s);
+                }
+                a64_set_split_flags_from_bits(s, out_n, out_z, out_c, out_v);
+                a64_record_conditional_cc_for_bcond(
+                    s, a->sf, tcg_rn, tcg_y, cond_true, tcg_last_op(),
+                    a->op ? (a->sf ? A64_X86_CC_SUB64 : A64_X86_CC_SUB32)
+                          : (a->sf ? A64_X86_CC_ADD64 : A64_X86_CC_ADD32),
+                    a->nzcv);
+                return true;
+            }
+
             a64_write_raw_flags_from_bits(s, out_n, out_z, out_c, out_v);
         }
     }
@@ -15973,13 +15771,14 @@ static void aarch64_tr_init_disas_context(DisasContextBase *dcbase,
     switch (EX_TBFLAG_A64(tb_flags, X86_FLAGS_VALID)) {
     case A64_X86_FLAGS_RAW:
         dc->a64_flags_rep = A64_FLAGS_REP_RAW;
+        dc->a64_raw_cc_op = EX_TBFLAG_A64(tb_flags, X86_CC_OP);
         break;
     case A64_X86_FLAGS_INVALID:
     default:
         dc->a64_flags_rep = A64_FLAGS_REP_SPLIT;
+        dc->a64_raw_cc_op = A64_X86_CC_INVALID;
         break;
     }
-    dc->a64_raw_cc_op = A64_X86_CC_INVALID;
     a64_clear_pending_cc_producer(dc);
     a64_clear_adjacent_host_flags(dc);
     dc->a64_cmp_stat_records = 0;
