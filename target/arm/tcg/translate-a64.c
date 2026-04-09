@@ -2409,32 +2409,10 @@ static bool a64_try_emit_conditional_cc_bcond(DisasContext *s, int cc,
 
 static bool a64_try_emit_cmp_bcond(DisasContext *s, int cc, TCGLabel *label)
 {
-    TCGCond cond;
-
     if (a64_try_emit_conditional_cc_bcond(s, cc, label)) {
         return true;
     }
-
-    if (!s->a64_pending_cc.valid ||
-        a64_pending_cc_has_live_split_flags(s) ||
-        !a64_cmp_cond_to_tcg(&cond, cc)) {
-        return false;
-    }
-
-    a64_cmp_note_consume(s, "B.cond-generic");
-
-    if (s->a64_pending_cc.sf) {
-        tcg_gen_brcond_i64(cond, s->a64_pending_cc.lhs,
-                           s->a64_pending_cc.rhs, label);
-    } else {
-        TCGv_i32 lhs = tcg_temp_new_i32();
-        TCGv_i32 rhs = tcg_temp_new_i32();
-
-        tcg_gen_extrl_i64_i32(lhs, s->a64_pending_cc.lhs);
-        tcg_gen_extrl_i64_i32(rhs, s->a64_pending_cc.rhs);
-        tcg_gen_brcond_i32(cond, lhs, rhs, label);
-    }
-    return true;
+    return false;
 }
 
 static bool a64_pending_cc_is_adjacent_to_curr_insn(DisasContext *s)
@@ -2447,6 +2425,11 @@ static bool a64_pending_cc_is_adjacent_to_curr_insn(DisasContext *s)
 
     return last == s->base.insn_start &&
         QTAILQ_PREV(last, link) == s->a64_pending_cc.end;
+}
+
+static bool a64_pending_cc_is_prev_guest_insn(DisasContext *s)
+{
+    return s->a64_pending_cc.valid && s->pc_curr == s->a64_pending_cc.pc + 4;
 }
 
 static bool a64_adjacent_host_flags_is_adjacent_to_curr_insn(DisasContext *s)
@@ -3411,8 +3394,8 @@ static bool a64_try_emit_x86_cmp_bcond(DisasContext *s, int cc,
     }
 
     if (!s->a64_pending_cc.valid ||
-        (s->a64_pending_cc.rewind != NULL &&
-         !a64_pending_cc_is_adjacent_to_curr_insn(s)) ||
+        !a64_pending_cc_is_prev_guest_insn(s) ||
+        !a64_pending_cc_is_adjacent_to_curr_insn(s) ||
         (!use_tcg_cond && !use_x86_jcc &&
          !use_add_hi_jcc && !use_add_ls_jcc)) {
         return false;
@@ -5203,6 +5186,15 @@ static void gen_adc_CC(DisasContext *s, int sf, TCGv_i64 dest,
     } else {
         gen_adc_CC_split(sf, dest, t0, t1, carry_in);
     }
+}
+
+static void a64_publish_adc_sbc_main_flags(DisasContext *s, bool sf,
+                                           TCGv_i64 lhs, TCGv_i64 rhs,
+                                           TCGv_i32 carry_in, bool is_sub)
+{
+    TCGv_i64 discarded = tcg_temp_new_i64();
+
+    gen_adc_CC(s, sf, discarded, lhs, rhs, carry_in, is_sub, true);
 }
 
 static void a64_gen_sbc_cmp_rhs(bool sf, TCGv_i64 out, TCGv_i64 rhs,
@@ -9253,7 +9245,8 @@ static bool do_addsub_imm(DisasContext *s, arg_rri_sf *a,
             kind = A64_PENDING_CC_MATERIALIZED_SUB;
         }
         s->a64_pending_cc.kind = kind;
-        if (lazy_ccmp_cmp || lazy_fccmp_cmp) {
+        if ((lazy_bcond_cmp && gap_insns > 0) ||
+            lazy_ccmp_cmp || lazy_fccmp_cmp) {
             a64_publish_addsub_main_flags(s, a->sf, tcg_rn, tcg_pending_imm,
                                           sub_op);
         }
@@ -13418,7 +13411,8 @@ static bool do_addsub_ext(DisasContext *s, arg_addsub_ext *a,
             kind = A64_PENDING_CC_MATERIALIZED_SUB;
         }
         s->a64_pending_cc.kind = kind;
-        if (lazy_ccmp_cmp || lazy_fccmp_cmp) {
+        if ((lazy_bcond_cmp && gap_insns > 0) ||
+            lazy_ccmp_cmp || lazy_fccmp_cmp) {
             a64_publish_addsub_main_flags(s, a->sf, tcg_rn, tcg_rm, sub_op);
         }
     }
@@ -13684,7 +13678,8 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
             kind = A64_PENDING_CC_MATERIALIZED_SUB;
         }
         s->a64_pending_cc.kind = kind;
-        if (lazy_ccmp_cmp || lazy_fccmp_cmp) {
+        if ((lazy_bcond_cmp && gap_insns > 0) ||
+            lazy_ccmp_cmp || lazy_fccmp_cmp) {
             a64_publish_addsub_main_flags(s, a->sf, tcg_rn, tcg_rm, sub_op);
         }
     }
@@ -13945,6 +13940,10 @@ static bool do_adc_sbc(DisasContext *s, arg_rrr_sf *a,
                                                : A64_X86_CC_ADC32,
                                          lazy_bcond_cmp ? gap_insns : 0);
                 s->a64_pending_cc.carry = carry;
+            }
+            if (gap_insns > 0) {
+                a64_publish_adc_sbc_main_flags(s, a->sf, tcg_rn, tcg_y,
+                                               carry, is_sub);
             }
         }
     }

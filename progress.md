@@ -1915,3 +1915,85 @@ day-to-day handoff:
 - [2026-04-02-worktree-closure-and-merge-strategy.md](/home/ruoyu/code/qemu_nzcv/qemu10.2/docs/superpowers/summaries/2026-04-02-worktree-closure-and-merge-strategy.md)
 - [2026-04-01-lazy-compare-phase-2-bcond.md](/home/ruoyu/code/qemu_nzcv/qemu10.2/docs/superpowers/archive/2026-04-01-lazy-compare-phase-2-bcond.md)
 - [2026-04-01-lazy-compare-phase-2-design.md](/home/ruoyu/code/qemu_nzcv/qemu10.2/docs/superpowers/specs/2026-04-01-lazy-compare-phase-2-design.md)
+
+## 2026-04-09 Deferred-Flags Main-Representation Slice: `B.cond`
+
+This slice moved plain compare-like `B.cond` gap consumers off the old
+pairwise `pending_cc` contract and onto the current main flags representation.
+
+What changed:
+
+- `B.cond` still keeps the adjacent same-guest-insn compare fast path:
+  - plain adjacent compare-like producer -> plain `B.cond`
+  - this remains on the old direct lowering path
+- gap compare-like `B.cond` no longer consumes old compare-like `pending_cc`:
+  - if the branch is not immediately after the producer in guest-PC terms,
+    the translator now falls back to reading the current main representation
+    (`RAW` or `SPLIT`)
+- conditional `CCMP/FCCMP -> B.cond` pending handling is unchanged in this
+  slice:
+  - the specialized conditional-pending branch path stays in place
+- to make the new branch path correct, lazy gap producers now publish durable
+  main flags when needed:
+  - compare-like `CMP/SUBS/CMN/ADDS` lazy `B.cond` gap producers now publish
+    main flags for non-adjacent gap cases
+  - `ADCS/SBCS rd==xzr` lazy `B.cond` gap producers now also publish durable
+    raw main flags for non-adjacent gap cases
+
+Focused checker change:
+
+- `tests/tcg/aarch64/check-cmp-bcond-gap-host-direct.sh` now encodes the new
+  contract:
+  - gap positives may still record a pending producer
+  - but they must not consume that old producer
+  - the branch block must instead read current `x86_raw_flags` and branch via
+    the main representation
+  - the plain adjacent precedence case still requires the old direct fast path
+
+Why this slice matters:
+
+- it removes one of the biggest remaining sources of miss-sensitive behavior:
+  plain gap `B.cond` no longer needs the old producer/consumer pairing to get
+  correct fast-path behavior
+- it keeps the most valuable immediate branch case narrow:
+  only truly adjacent guest compare -> branch keeps the old direct lowering
+- it exposes which producer families still need explicit main-state publish
+  support instead of silently relying on pairwise pending consumption
+
+Verification after this slice:
+
+- focused branch checks:
+  - `check-cmp-bcond-gap-host-direct.sh`
+  - `check-cmp-bcond-ext-host-direct.sh`
+  - `check-cmp-ccmp-bcond-chain-host-direct.sh`
+  - `check-cmp-csel-bcond-chain-host-direct.sh`
+  - `check-cmp-ccmp-csel-bcond-chain-host-direct.sh`
+  - `check-cmp-ccmp-csel-ccmp-chain-host-direct.sh`
+- shared regressions:
+  - `nzcv-status4`: `PASS`
+  - `check-nzcv-status4-raw-ccop-specialization.sh`: `PASS`
+- SPEC CPU2017 `test` smoke using `config/qemu_aarch64_tcg.cfg` with the
+  current main-branch `build-aarch64-linux-user/qemu-aarch64`:
+  - `502.gcc_r`: `Success`
+  - `505.mcf_r`: `Success`
+  - `531.deepsjeng_r`: `Success`
+  - `541.leela_r`: `Success`
+  - `557.xz_r`: `Success`
+  - result bundle: `CPU2017.106.*`
+  - log: `/home/wangruoyu/cpuspec2017/result/CPU2017.106.log`
+
+Current local conclusion:
+
+- `CCMP/FCCMP` consumers already read main representation
+- plain gap `B.cond` now reads main representation too
+- the next main-representation consumer slice should be `CSEL/CS*` and then
+  plain `ADC/SBC`, rather than extending the older producer-chaining line
+  further first
+
+Historical note:
+
+- the older adjacent-only producer-chaining roadmap above remains useful
+  background for already-landed chain coverage
+- but the active local direction is now the deferred-flags main-representation
+  migration described here and in
+  `docs/superpowers/specs/2026-04-09-deferred-flags-main-representation-design.md`

@@ -23,14 +23,14 @@ case "$host_arch" in
         ;;
 esac
 
-log="${exe}.cmp_bcond_gap.outasm.log"
+log="${exe}.cmp_bcond_gap.log"
 nm_log="${exe}.cmp_bcond_gap.nm"
 block_dir="${exe}.cmp_bcond_gap.blocks"
 rm -f "$log" "$nm_log"
 rm -rf "$block_dir"
 mkdir -p "$block_dir"
 
-"$qemu_bin" -d op,in_asm,out_asm,nochain -D "$log" "$exe" >/dev/null 2>&1 \
+"$qemu_bin" -d op,in_asm,nochain -D "$log" "$exe" >/dev/null 2>&1 \
     || die "running $exe under $qemu_bin failed"
 
 nm -n "$exe" >"$nm_log" || die "failed to collect symbols for $exe"
@@ -56,7 +56,7 @@ sym_addr()
     ' "$nm_log" || die "failed to resolve symbol $sym in $exe"
 }
 
-extract_host_block()
+extract_op_block()
 {
     local label=$1
     local branch_sym=$2
@@ -65,15 +65,13 @@ extract_host_block()
     local block
 
     branch_addr=$(sym_addr "$branch_sym")
-    block="${block_dir}/${label}.host"
-    start_line=$(rg -n -m1 "^[[:space:]]*-- guest addr 0x0*${branch_addr}([[:space:]]|$)" \
+    block="${block_dir}/${label}.op"
+    start_line=$(rg -n -m1 "^ ---- 0*${branch_addr} " \
         "$log" | cut -d: -f1) || die "failed to locate host block for $label"
 
     awk -v start="$start_line" '
     NR >= start {
-        if (NR > start &&
-            (/^[[:space:]]*-- guest addr 0x[0-9a-f]+/ ||
-             /^[[:space:]]*-- tb slow paths/)) {
+        if (NR > start && (/^ ---- / || /^----------------$/)) {
             exit 0;
         }
         print;
@@ -86,37 +84,52 @@ extract_host_block()
     echo "$block"
 }
 
-assert_direct_host_block()
+assert_case_contains()
 {
     local label=$1
     local branch_sym=$2
+    local pattern=$3
     local block
 
-    block=$(extract_host_block "$label" "$branch_sym")
+    block=$(extract_op_block "$label" "$branch_sym")
+    rg -q "$pattern" "$block" \
+        || die "expected pattern '$pattern' in $label OP block"
+}
 
-    grep -Eq '(^|[^[:alnum:]_])(cmp[ql]|add[ql]|sub[ql]|adc[ql]|sbb[ql])([^[:alnum:]_]|$)' "$block" \
-        || die "expected compare/add/sub/adc/sbb lowering in $label host block"
+assert_case_lacks()
+{
+    local label=$1
+    local branch_sym=$2
+    local pattern=$3
+    local block
 
-    if grep -Eo '\bset[a-z]+\b' "$block" | grep -Ev '^seto$' >/dev/null; then
-        die "unexpected canonical flag decode setcc in $label host block"
+    block=$(extract_op_block "$label" "$branch_sym")
+    if rg -q "$pattern" "$block"; then
+        die "unexpected pattern '$pattern' in $label OP block"
     fi
+}
 
-    if grep -Eq '\b(test[qlbwd]?|shr[qlbwd]?|and[qlbwd]?|not[qlbwd]?)\b' \
-        "$block"; then
-        die "unexpected canonical flag decode ops in $label host block"
-    fi
+assert_main_rep_branch_block()
+{
+    local label=$1
+    local branch_sym=$2
 
-    awk '
-    {
-        for (i = 1; i <= NF; ++i) {
-            if ($i ~ /^j[a-z][a-z]?$/ && $i != "jmp") {
-                found = 1;
-                exit 0;
-            }
-        }
-    }
-    END { exit(found ? 0 : 1) }
-    ' "$block" || die "expected conditional jump in $label host block"
+    assert_case_contains "$label" "$branch_sym" 'x86_raw_flags'
+    assert_case_contains "$label" "$branch_sym" 'brcond_i64'
+    assert_case_lacks "$label" "$branch_sym" \
+        'x86_(cmp|add|adc)_(brcond|jcc|hi_jcc|ls_jcc)_capture_rawflags'
+    assert_case_lacks "$label" "$branch_sym" 'mov_i32 x86_cc_op'
+}
+
+assert_adjacent_direct_branch_block()
+{
+    local label=$1
+    local branch_sym=$2
+
+    assert_case_contains "$label" "$branch_sym" \
+        'x86_(cmp|add|adc)_(brcond|jcc|hi_jcc|ls_jcc)_capture_rawflags'
+    assert_case_lacks "$label" "$branch_sym" 'brcond_i64'
+    assert_case_lacks "$label" "$branch_sym" 'and_i32 .*x86_raw_flags'
 }
 
 assert_record()
@@ -207,48 +220,69 @@ assert_direct_positive()
 
     assert_record "$label" "$producer_sym"
     assert_use "$label" "$producer_sym" "$branch_sym" "$age"
-    assert_direct_host_block "$label" "$branch_sym"
+    assert_adjacent_direct_branch_block "$label" "$branch_sym"
 }
 
-assert_direct_positive "cmp gap1" cmp_gap1_producer cmp_gap1_branch 2
-assert_direct_positive "subs gap4" subs_gap4_producer subs_gap4_branch 5
-assert_direct_positive "cmp gap8" cmp_gap8_producer cmp_gap8_branch 9
-assert_direct_positive "cmn gap1" cmn_gap1_producer cmn_gap1_branch 2
-assert_direct_positive "adds gap4" adds_gap4_producer adds_gap4_branch 5
-assert_direct_positive "cmn gap8" cmn_gap8_producer cmn_gap8_branch 9
-assert_direct_positive "cmn cs gap1" cmn_cs_gap1_producer cmn_cs_gap1_branch 2
-assert_direct_positive "adds cc gap1" adds_cc_gap1_producer adds_cc_gap1_branch 2
-assert_direct_positive "cmn hi gap4" cmn_hi_gap4_producer cmn_hi_gap4_branch 5
-assert_direct_positive "adds ls gap4" adds_ls_gap4_producer adds_ls_gap4_branch 5
-assert_direct_positive "cmn vs gap1" cmn_vs_gap1_producer cmn_vs_gap1_branch 2
-assert_direct_positive "adds vc gap4" adds_vc_gap4_producer adds_vc_gap4_branch 5
-assert_direct_positive "cmn mi gap4" cmn_mi_gap4_producer cmn_mi_gap4_branch 5
-assert_direct_positive "adds pl gap1" adds_pl_gap1_producer adds_pl_gap1_branch 2
-assert_direct_positive "adcs cs gap1" adcs_cs_gap1_producer adcs_cs_gap1_branch 2
-assert_direct_positive "adcs cc gap1" adcs_cc_gap1_producer adcs_cc_gap1_branch 2
-assert_direct_positive "adcs hi gap4" adcs_hi_gap4_producer adcs_hi_gap4_branch 5
-assert_direct_positive "adcs ls gap4" adcs_ls_gap4_producer adcs_ls_gap4_branch 5
-assert_direct_positive "adcs eq gap1" adcs_eq_gap1_producer adcs_eq_gap1_branch 2
-assert_direct_positive "adcs vs gap4" adcs_vs_gap4_producer adcs_vs_gap4_branch 5
-assert_direct_positive "adcs rd eq gap1" adcs_rd_eq_gap1_producer adcs_rd_eq_gap1_branch 2
-assert_direct_positive "adcs rd cs gap1" adcs_rd_cs_gap1_producer adcs_rd_cs_gap1_branch 2
-assert_direct_positive "adcs rd vs gap4" adcs_rd_vs_gap4_producer adcs_rd_vs_gap4_branch 5
-assert_direct_positive "adcs rd hi gap4" adcs_rd_hi_gap4_producer adcs_rd_hi_gap4_branch 5
-assert_direct_positive "sbcs rd cs gap1" sbcs_rd_cs_gap1_producer sbcs_rd_cs_gap1_branch 2
-assert_direct_positive "sbcs rd mi gap4" sbcs_rd_mi_gap4_producer sbcs_rd_mi_gap4_branch 5
-assert_direct_positive "adcs32 rd eq gap1" adcs32_rd_eq_gap1_producer adcs32_rd_eq_gap1_branch 2
-assert_direct_positive "sbcs32 rd mi gap4" sbcs32_rd_mi_gap4_producer sbcs32_rd_mi_gap4_branch 5
+assert_main_rep_positive()
+{
+    local label=$1
+    local producer_sym=$2
+    local branch_sym=$3
 
-assert_no_use "non-whitelist gap" cmp_bad_gap_producer
-assert_no_use "flags writer gap" cmp_flags_writer_producer
-assert_no_use "gap overflow" cmp_gap9_producer
-assert_no_use "page boundary" cmp_page_boundary_producer
+    assert_record "$label" "$producer_sym"
+    assert_no_use "$label" "$producer_sym"
+    assert_main_rep_branch_block "$label" "$branch_sym"
+}
+
+assert_main_rep_unrecorded_positive()
+{
+    local label=$1
+    local producer_sym=$2
+    local branch_sym=$3
+
+    assert_no_use "$label" "$producer_sym"
+    assert_main_rep_branch_block "$label" "$branch_sym"
+}
+
+assert_main_rep_positive "cmp gap1" cmp_gap1_producer cmp_gap1_branch
+assert_main_rep_positive "subs gap4" subs_gap4_producer subs_gap4_branch
+assert_main_rep_positive "cmp gap8" cmp_gap8_producer cmp_gap8_branch
+assert_main_rep_positive "cmn gap1" cmn_gap1_producer cmn_gap1_branch
+assert_main_rep_positive "adds gap4" adds_gap4_producer adds_gap4_branch
+assert_main_rep_positive "cmn gap8" cmn_gap8_producer cmn_gap8_branch
+assert_main_rep_positive "cmn cs gap1" cmn_cs_gap1_producer cmn_cs_gap1_branch
+assert_main_rep_positive "adds cc gap1" adds_cc_gap1_producer adds_cc_gap1_branch
+assert_main_rep_positive "cmn hi gap4" cmn_hi_gap4_producer cmn_hi_gap4_branch
+assert_main_rep_positive "adds ls gap4" adds_ls_gap4_producer adds_ls_gap4_branch
+assert_main_rep_positive "cmn vs gap1" cmn_vs_gap1_producer cmn_vs_gap1_branch
+assert_main_rep_positive "adds vc gap4" adds_vc_gap4_producer adds_vc_gap4_branch
+assert_main_rep_positive "cmn mi gap4" cmn_mi_gap4_producer cmn_mi_gap4_branch
+assert_main_rep_positive "adds pl gap1" adds_pl_gap1_producer adds_pl_gap1_branch
+assert_main_rep_positive "adcs cs gap1" adcs_cs_gap1_producer adcs_cs_gap1_branch
+assert_main_rep_positive "adcs cc gap1" adcs_cc_gap1_producer adcs_cc_gap1_branch
+assert_main_rep_positive "adcs hi gap4" adcs_hi_gap4_producer adcs_hi_gap4_branch
+assert_main_rep_positive "adcs ls gap4" adcs_ls_gap4_producer adcs_ls_gap4_branch
+assert_main_rep_positive "adcs eq gap1" adcs_eq_gap1_producer adcs_eq_gap1_branch
+assert_main_rep_positive "adcs vs gap4" adcs_vs_gap4_producer adcs_vs_gap4_branch
+assert_main_rep_positive "adcs rd eq gap1" adcs_rd_eq_gap1_producer adcs_rd_eq_gap1_branch
+assert_main_rep_positive "adcs rd cs gap1" adcs_rd_cs_gap1_producer adcs_rd_cs_gap1_branch
+assert_main_rep_positive "adcs rd vs gap4" adcs_rd_vs_gap4_producer adcs_rd_vs_gap4_branch
+assert_main_rep_positive "adcs rd hi gap4" adcs_rd_hi_gap4_producer adcs_rd_hi_gap4_branch
+assert_main_rep_positive "sbcs rd cs gap1" sbcs_rd_cs_gap1_producer sbcs_rd_cs_gap1_branch
+assert_main_rep_positive "sbcs rd mi gap4" sbcs_rd_mi_gap4_producer sbcs_rd_mi_gap4_branch
+assert_main_rep_positive "adcs32 rd eq gap1" adcs32_rd_eq_gap1_producer adcs32_rd_eq_gap1_branch
+assert_main_rep_positive "sbcs32 rd mi gap4" sbcs32_rd_mi_gap4_producer sbcs32_rd_mi_gap4_branch
+
+assert_main_rep_unrecorded_positive "non-whitelist gap" cmp_bad_gap_producer cmp_bad_gap_branch
+assert_main_rep_unrecorded_positive "flags writer gap" cmp_flags_writer_producer cmp_flags_writer_branch
+assert_main_rep_unrecorded_positive "gap overflow" cmp_gap9_producer cmp_gap9_branch
+assert_main_rep_unrecorded_positive "page boundary" cmp_page_boundary_producer cmp_page_boundary_branch
 assert_no_use "direct control-flow cut" cmp_direct_cut_producer
 
 assert_record "adjacent precedence" cmp_adjacent_precedence_producer
 assert_use "adjacent precedence" cmp_adjacent_precedence_producer \
     cmp_adjacent_precedence_branch 1
-assert_direct_host_block "adjacent precedence" cmp_adjacent_precedence_branch
+assert_adjacent_direct_branch_block "adjacent precedence" cmp_adjacent_precedence_branch
 
 rg -q 'A64 cmp-pending record pc=0x' "$log" \
     || die "expected at least one cmp-pending record marker"
