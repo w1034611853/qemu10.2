@@ -206,10 +206,7 @@ assert_gap_fallback()
     assert_no_use "$label old producer" "$producer_sym"
 
     assert_record "$label first ccmp producer" "$first_ccmp_sym"
-    assert_use "$label first ccmp producer" "$first_ccmp_sym" "$csel_sym" 1 \
-        "CSEL-CCMP-pending"
-    assert_retire "$label first ccmp producer" "$first_ccmp_sym" "$csel_sym" 1 \
-        "CSEL-CCMP-pending"
+    assert_no_use "$label first ccmp producer" "$first_ccmp_sym"
 
     assert_no_record "$label csel producer" "$csel_sym"
 

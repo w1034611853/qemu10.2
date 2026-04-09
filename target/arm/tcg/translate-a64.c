@@ -9246,6 +9246,7 @@ static bool do_addsub_imm(DisasContext *s, arg_rri_sf *a,
         }
         s->a64_pending_cc.kind = kind;
         if ((lazy_bcond_cmp && gap_insns > 0) ||
+            lazy_condsel_cmp ||
             lazy_ccmp_cmp || lazy_fccmp_cmp) {
             a64_publish_addsub_main_flags(s, a->sf, tcg_rn, tcg_pending_imm,
                                           sub_op);
@@ -13412,6 +13413,7 @@ static bool do_addsub_ext(DisasContext *s, arg_addsub_ext *a,
         }
         s->a64_pending_cc.kind = kind;
         if ((lazy_bcond_cmp && gap_insns > 0) ||
+            lazy_condsel_cmp ||
             lazy_ccmp_cmp || lazy_fccmp_cmp) {
             a64_publish_addsub_main_flags(s, a->sf, tcg_rn, tcg_rm, sub_op);
         }
@@ -13679,6 +13681,7 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
         }
         s->a64_pending_cc.kind = kind;
         if ((lazy_bcond_cmp && gap_insns > 0) ||
+            lazy_condsel_cmp ||
             lazy_ccmp_cmp || lazy_fccmp_cmp) {
             a64_publish_addsub_main_flags(s, a->sf, tcg_rn, tcg_rm, sub_op);
         }
@@ -14170,6 +14173,7 @@ static bool trans_CSEL(DisasContext *s, arg_CSEL *a)
     TCGv_i64 zero = tcg_constant_i64(0);
     DisasCompare64 c;
     TCGv_i32 cond32 = tcg_temp_new_i32();
+    bool consume_pending_for_rechain = false;
     bool rechain_pending = false;
     A64PendingCCProducer pending_snapshot = {
         .cc_op = A64_X86_CC_INVALID,
@@ -14194,25 +14198,28 @@ static bool trans_CSEL(DisasContext *s, arg_CSEL *a)
          */
         if (a64_pending_cc_should_rechain_after_transparent_consumer(s)) {
             pending_snapshot = s->a64_pending_cc;
+            consume_pending_for_rechain = true;
         }
     }
 
-    if (a64_try_consume_cmp_cond_bool_i32_to_split(s, a->cond, cond32,
+    if (consume_pending_for_rechain &&
+        a64_try_consume_cmp_cond_bool_i32_to_split(s, a->cond, cond32,
                                                    "CSEL-pending")) {
         TCGv_i64 cond64 = tcg_temp_new_i64();
 
         tcg_gen_extu_i32_i64(cond64, cond32);
         c.cond = TCG_COND_NE;
         c.value = cond64;
-        rechain_pending = pending_snapshot.cc_op != A64_X86_CC_INVALID;
-    } else if (a64_try_consume_conditional_cc_cond_bool_i32_to_split(
+        rechain_pending = true;
+    } else if (consume_pending_for_rechain &&
+               a64_try_consume_conditional_cc_cond_bool_i32_to_split(
                    s, a->cond, cond32, "CSEL-CCMP-pending")) {
         TCGv_i64 cond64 = tcg_temp_new_i64();
 
         tcg_gen_extu_i32_i64(cond64, cond32);
         c.cond = TCG_COND_NE;
         c.value = cond64;
-        rechain_pending = pending_snapshot.cc_op != A64_X86_CC_INVALID;
+        rechain_pending = true;
     } else if (a64_try_peek_add_cond_bool_i32(s, a->cond, cond32,
                                               "CSEL-add-pending")) {
         TCGv_i64 cond64 = tcg_temp_new_i64();

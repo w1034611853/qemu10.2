@@ -1997,3 +1997,81 @@ Historical note:
 - but the active local direction is now the deferred-flags main-representation
   migration described here and in
   `docs/superpowers/specs/2026-04-09-deferred-flags-main-representation-design.md`
+
+## 2026-04-09 Deferred-Flags Main-Representation Slice: `CSEL/CS*`
+
+This slice moved plain compare-like and conditional-CC gap `CSEL/CS*`
+consumers off the old pairwise `pending_cc` consume path and onto the current
+main flags representation.
+
+What changed:
+
+- `CSEL/CSINC/CSINV/CSNEG/CSET/CSETM` still keep the existing logic fast path:
+  - adjacent logic producer -> `CSEL/CS*` continues to lower through the
+    host-direct logic route
+- compare-like and conditional-CC `CSEL/CS*` now only consume old pending
+  producers when the translator is intentionally preserving one more
+  adjacent-only rechain hop:
+  - same narrow reseed shapes remain on the old pending contract
+  - plain gap cases now read current `RAW/SPLIT` main representation instead
+- lazy compare-like gap producers now publish durable main flags for
+  `lazy_condsel_cmp`, not just for `B.cond`/`CCMP`/`FCCMP`:
+  - `CMP/SUBS/CMN/ADDS` gap producers now export durable main flags before
+    plain `CSEL/CS*` consumers read them from `x86_raw_flags`
+
+Focused checker change:
+
+- `tests/tcg/aarch64/check-cmp-csel-gap-host-direct.sh` now encodes the new
+  contract:
+  - plain gap positives may still record a pending producer
+  - but they must not consume or retire that old producer via `CSEL-pending`
+  - the consumer block must read `x86_raw_flags` and lower through
+    `movcond_i64` / `setcond_i64` / `negsetcond_i64`
+- nearby chain/fallback checkers were updated to reflect the same boundary:
+  - true chain-positive shapes still assert the old adjacent reseed behavior
+  - `... -> csel gap -> ... fallback` shapes now assert `no_use` for the old
+    producer instead of requiring a `CSEL-pending` consume
+
+Why this slice matters:
+
+- it removes another large miss-sensitive path from the old sidecar model:
+  plain gap `CSEL/CS*` no longer needs producer/consumer pairing to stay fast
+- it keeps the still-useful adjacent reseed path explicit and narrow, instead
+  of letting plain gap cases silently depend on it
+- it forced producer-side main-state publish to become explicit for
+  `lazy_condsel_cmp`, which was previously missing and would otherwise leave
+  gap `CSEL/CS*` consumers reading stale raw flags
+
+Verification after this slice:
+
+- focused `CSEL/CS*` checks:
+  - `check-cmp-csel-gap-host-direct.sh`
+  - `check-cmp-csel-bcond-chain-host-direct.sh`
+  - `check-cmp-csel-ccmp-chain-host-direct.sh`
+  - `check-cmp-csel-csel-chain-host-direct.sh`
+  - `check-cmp-ccmp-csel-bcond-chain-host-direct.sh`
+  - `check-cmp-ccmp-csel-ccmp-chain-host-direct.sh`
+- neighboring logic checks:
+  - `check-logic-csel-host-direct.sh`
+  - `check-logic-csel-ccmp-gap-host-direct.sh`
+- shared regressions:
+  - `nzcv-status4`: `PASS`
+  - `check-nzcv-status4-raw-ccop-specialization.sh`: `PASS`
+- SPEC CPU2017 `test` smoke using `config/qemu_aarch64_tcg.cfg` with the
+  current main-branch `build-aarch64-linux-user/qemu-aarch64`:
+  - `502.gcc_r`: `Success`
+  - `505.mcf_r`: `Success`
+  - `531.deepsjeng_r`: `Success`
+  - `541.leela_r`: `Success`
+  - `557.xz_r`: `Success`
+  - result bundle: `CPU2017.107.*`
+  - log: `/home/wangruoyu/cpuspec2017/result/CPU2017.107.log`
+
+Current local conclusion:
+
+- `CCMP/FCCMP`, plain gap `B.cond`, and plain gap `CSEL/CS*` now read current
+  main representation instead of depending on the older pairwise pending
+  consume model
+- the remaining obvious main-representation consumer slice is plain
+  `ADC/SBC`, with the same rule: keep truly adjacent hot paths narrow, pull
+  gap consumers onto `RAW/SPLIT`

@@ -142,8 +142,7 @@ assert_chain_gap_no_reseed()
     local csel_sym=$3
 
     assert_record "$label old producer" "$producer_sym"
-    assert_use "$label old producer" "$producer_sym" "$csel_sym" 2 "CSEL-pending"
-    assert_retire "$label old producer" "$producer_sym" "$csel_sym" 2 "CSEL-pending"
+    assert_no_use "$label old producer" "$producer_sym"
     assert_no_record "$label reseeded producer" "$csel_sym"
 }
 

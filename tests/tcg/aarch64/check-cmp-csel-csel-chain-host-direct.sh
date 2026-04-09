@@ -141,6 +141,18 @@ assert_retire()
         "$log" || die "expected cmp-pending retire for $label"
 }
 
+assert_no_use()
+{
+    local label=$1
+    local producer_sym=$2
+    local producer_addr
+
+    producer_addr=$(sym_addr "$producer_sym")
+    if rg -q "A64 cmp-pending use producer_pc=0x${producer_addr}\\b" "$log"; then
+        die "unexpected cmp-pending use for $label"
+    fi
+}
+
 assert_direct_host_block()
 {
     local label=$1
@@ -203,8 +215,7 @@ assert_gap_fallback()
     local second_csel_sym=$4
 
     assert_record "$label old producer" "$producer_sym"
-    assert_use "$label old producer" "$producer_sym" "$first_csel_sym" 2 "CSEL-pending"
-    assert_retire "$label old producer" "$producer_sym" "$first_csel_sym" 2 "CSEL-pending"
+    assert_no_use "$label old producer" "$producer_sym"
     assert_no_record "$label first reseed" "$first_csel_sym"
     assert_no_record "$label second reseed" "$second_csel_sym"
 }

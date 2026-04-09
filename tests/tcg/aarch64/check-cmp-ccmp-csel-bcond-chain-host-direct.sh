@@ -199,10 +199,7 @@ assert_gap_fallback()
     assert_no_use "$label old producer" "$producer_sym"
 
     assert_record "$label ccmp producer" "$ccmp_sym"
-    assert_use "$label ccmp producer" "$ccmp_sym" "$csel_sym" 1 \
-        "CSEL-CCMP-pending"
-    assert_retire "$label ccmp producer" "$ccmp_sym" "$csel_sym" 1 \
-        "CSEL-CCMP-pending"
+    assert_no_use "$label ccmp producer" "$ccmp_sym"
 
     assert_no_record "$label csel producer" "$csel_sym"
     assert_case_lacks "$label ccmp block" "$ccmp_sym" 'mov_i32 x86_raw_flags'
