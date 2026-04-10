@@ -173,7 +173,7 @@ assert_chain_positive()
     local second_ccmp_sym=$5
     local branch_sym=$6
 
-    assert_record "$label old producer" "$producer_sym"
+    assert_no_record "$label old producer" "$producer_sym"
     assert_no_use "$label old producer" "$producer_sym"
 
     assert_record "$label first ccmp producer" "$first_ccmp_sym"
@@ -202,7 +202,7 @@ assert_gap_fallback()
     local second_ccmp_sym=$5
     local branch_sym=$6
 
-    assert_record "$label old producer" "$producer_sym"
+    assert_no_record "$label old producer" "$producer_sym"
     assert_no_use "$label old producer" "$producer_sym"
 
     assert_record "$label first ccmp producer" "$first_ccmp_sym"

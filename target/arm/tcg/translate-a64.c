@@ -1241,6 +1241,72 @@ static bool a64_find_future_fccmp_gap_add(DisasContext *s,
     return false;
 }
 
+static bool a64_pc_has_adjacent_compare_rechain_successor(DisasContext *s,
+                                                          target_ulong pc)
+{
+    uint32_t insn;
+    int cc;
+    TCGCond cond;
+
+    if (s->base.max_insns - s->base.num_insns <= 0) {
+        return false;
+    }
+    if (!translator_is_same_page(&s->base, pc)) {
+        return false;
+    }
+
+    insn = arm_ldl_code(s->env, &s->base, pc, s->sctlr_b);
+    if (a64_insn_is_plain_bcond(insn, &cc)) {
+        return true;
+    }
+    if (a64_insn_is_condsel(insn, &cc)) {
+        return a64_cmp_cond_supported_for_lazy_condsel(cc);
+    }
+    if (a64_insn_is_ccmp(insn, &cc)) {
+        return a64_cmp_cond_to_tcg(&cond, cc);
+    }
+    return false;
+}
+
+static bool a64_find_future_condsel_rechain_gap(DisasContext *s,
+                                                uint8_t *gap_insns,
+                                                int *match_cc)
+{
+    target_ulong pc = s->base.pc_next;
+    int remaining = s->base.max_insns - s->base.num_insns;
+    int cc;
+
+    *gap_insns = 0;
+
+    for (int gap = 0; gap < remaining && gap <= A64_CMP_PENDING_GAP_MAX;
+         gap++, pc += 4) {
+        uint32_t insn;
+
+        if (!translator_is_same_page(&s->base, pc)) {
+            return false;
+        }
+
+        insn = arm_ldl_code(s->env, &s->base, pc, s->sctlr_b);
+        if (a64_insn_is_condsel(insn, &cc)) {
+            if (!a64_cmp_cond_supported_for_lazy_condsel(cc)) {
+                return false;
+            }
+            if (!a64_pc_has_adjacent_compare_rechain_successor(s, pc + 4)) {
+                return false;
+            }
+            *gap_insns = gap;
+            if (match_cc) {
+                *match_cc = cc;
+            }
+            return true;
+        }
+        if (!a64_insn_is_cmp_gap_safe(insn)) {
+            return false;
+        }
+    }
+    return false;
+}
+
 static bool a64_find_adjacent_plain_sbc_cmp(DisasContext *s)
 {
     target_ulong pc = s->base.pc_next;
@@ -2003,6 +2069,19 @@ static bool a64_pending_cc_should_rechain_after_transparent_consumer(
         return true;
     }
     return false;
+}
+
+static bool a64_compare_like_producer_needs_adjacent_pending(DisasContext *s)
+{
+    uint8_t gap_insns = 0;
+
+    if (a64_find_future_condsel_gap(s, &gap_insns, NULL) && gap_insns == 0) {
+        return true;
+    }
+    if (a64_find_future_bcond_gap(s, &gap_insns, NULL) && gap_insns == 0) {
+        return true;
+    }
+    return a64_find_future_ccmp_gap(s, &gap_insns, NULL) && gap_insns == 0;
 }
 
 static bool a64_pending_cc_is_conditional_materialized(DisasContext *s)
@@ -9087,9 +9166,14 @@ static bool do_addsub_imm(DisasContext *s, arg_rri_sf *a,
     bool lazy_fccmp_cmp = false;
     bool lazy_sbc_cmp = false;
     bool lazy_adc_add = false;
+    bool lazy_condsel_rechain_cmp = false;
     bool materialized_sbc_sub = false;
     bool materialized_adc_add = false;
+    bool compare_like = setflags && a->rd == 31;
+    bool need_pending_record = false;
+    bool need_main_flags_publish = false;
     uint8_t gap_insns = 0;
+    uint8_t condsel_rechain_gap_insns = 0;
     int future_bcond_cc = -1;
     TCGv_i64 tcg_rn = read_cpu_reg_sp(s, a->rn, a->sf);
     TCGv_i64 tcg_imm = tcg_constant_i64(a->imm);
@@ -9098,6 +9182,10 @@ static bool do_addsub_imm(DisasContext *s, arg_rri_sf *a,
     TCGv_i64 tcg_result;
 
     if (setflags && sub_op && a->rd == 31) {
+        lazy_condsel_rechain_cmp =
+            a64_find_future_condsel_rechain_gap(s,
+                                                &condsel_rechain_gap_insns,
+                                                NULL);
         lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns, NULL);
         if (!lazy_bcond_cmp) {
             lazy_condsel_cmp = a64_find_future_condsel_gap(s, &gap_insns,
@@ -9130,6 +9218,10 @@ static bool do_addsub_imm(DisasContext *s, arg_rri_sf *a,
             lazy_sbc_cmp = a64_find_adjacent_plain_sbc_cmp(s);
         }
     } else if (setflags && !sub_op && a->rd == 31) {
+        lazy_condsel_rechain_cmp =
+            a64_find_future_condsel_rechain_gap(s,
+                                                &condsel_rechain_gap_insns,
+                                                NULL);
         lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns,
                                                    &future_bcond_cc);
         if (lazy_bcond_cmp &&
@@ -9173,6 +9265,16 @@ static bool do_addsub_imm(DisasContext *s, arg_rri_sf *a,
         /* Materialized ADDS rd - can look for both ADC and ADCS */
         materialized_adc_add = a64_find_adjacent_plain_adc(s, true);
     }
+
+    need_pending_record =
+        ((compare_like && a64_compare_like_producer_needs_adjacent_pending(s)) ||
+         lazy_condsel_rechain_cmp ||
+         lazy_fcsel_cmp ||
+         lazy_sbc_cmp || lazy_adc_add ||
+         materialized_sbc_sub || materialized_adc_add);
+    need_main_flags_publish =
+        ((lazy_bcond_cmp && gap_insns > 0) ||
+         lazy_condsel_cmp || lazy_ccmp_cmp || lazy_fccmp_cmp);
 
     if (!setflags) {
         tcg_rd = cpu_reg_sp(s, a->rd);
@@ -9221,10 +9323,7 @@ static bool do_addsub_imm(DisasContext *s, arg_rri_sf *a,
         tcg_gen_movi_i64(tcg_pending_imm, a->imm);
     }
 
-    if (lazy_bcond_cmp || lazy_condsel_cmp || lazy_ccmp_cmp ||
-        lazy_fcsel_cmp || lazy_fccmp_cmp ||
-        lazy_sbc_cmp || lazy_adc_add ||
-        materialized_sbc_sub || materialized_adc_add) {
+    if (need_pending_record) {
         A64PendingCCProducerKind kind = A64_PENDING_CC_REWINDABLE_CMP;
 
         a64_record_cmp_for_bcond(s, a->sf, tcg_rn, tcg_pending_imm,
@@ -9234,22 +9333,19 @@ static bool do_addsub_imm(DisasContext *s, arg_rri_sf *a,
                                                  : A64_X86_CC_SUB32)
                                         : (a->sf ? A64_X86_CC_ADD64
                                                  : A64_X86_CC_ADD32),
-                                 (lazy_bcond_cmp || lazy_condsel_cmp ||
-                                  lazy_ccmp_cmp || lazy_fcsel_cmp ||
-                                  lazy_fccmp_cmp) ?
-                                 gap_insns : 0);
+                                 lazy_condsel_rechain_cmp
+                                 ? condsel_rechain_gap_insns
+                                 : (lazy_fcsel_cmp ? gap_insns : 0));
         if (materialized_adc_add) {
             kind = A64_PENDING_CC_MATERIALIZED_ADD;
         } else if (materialized_sbc_sub) {
             kind = A64_PENDING_CC_MATERIALIZED_SUB;
         }
         s->a64_pending_cc.kind = kind;
-        if ((lazy_bcond_cmp && gap_insns > 0) ||
-            lazy_condsel_cmp ||
-            lazy_ccmp_cmp || lazy_fccmp_cmp) {
-            a64_publish_addsub_main_flags(s, a->sf, tcg_rn, tcg_pending_imm,
-                                          sub_op);
-        }
+    }
+    if (need_main_flags_publish) {
+        a64_publish_addsub_main_flags(s, a->sf, tcg_rn, tcg_pending_imm,
+                                      sub_op);
     }
     return true;
 }
@@ -13252,9 +13348,14 @@ static bool do_addsub_ext(DisasContext *s, arg_addsub_ext *a,
     bool lazy_fccmp_cmp = false;
     bool lazy_sbc_cmp = false;
     bool lazy_adc_add = false;
+    bool lazy_condsel_rechain_cmp = false;
     bool materialized_sbc_sub = false;
     bool materialized_adc_add = false;
+    bool compare_like = setflags && a->rd == 31;
+    bool need_pending_record = false;
+    bool need_main_flags_publish = false;
     uint8_t gap_insns = 0;
+    uint8_t condsel_rechain_gap_insns = 0;
     int future_bcond_cc = -1;
     TCGv_i64 tcg_rm, tcg_rn, tcg_rd = NULL, tcg_result;
 
@@ -13263,6 +13364,10 @@ static bool do_addsub_ext(DisasContext *s, arg_addsub_ext *a,
     }
 
     if (setflags && sub_op && a->rd == 31) {
+        lazy_condsel_rechain_cmp =
+            a64_find_future_condsel_rechain_gap(s,
+                                                &condsel_rechain_gap_insns,
+                                                NULL);
         lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns, NULL);
         if (!lazy_bcond_cmp) {
             lazy_condsel_cmp = a64_find_future_condsel_gap(s, &gap_insns,
@@ -13295,6 +13400,10 @@ static bool do_addsub_ext(DisasContext *s, arg_addsub_ext *a,
             lazy_sbc_cmp = a64_find_adjacent_plain_sbc_cmp(s);
         }
     } else if (setflags && !sub_op && a->rd == 31) {
+        lazy_condsel_rechain_cmp =
+            a64_find_future_condsel_rechain_gap(s,
+                                                &condsel_rechain_gap_insns,
+                                                NULL);
         lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns,
                                                    &future_bcond_cc);
         if (lazy_bcond_cmp &&
@@ -13338,6 +13447,16 @@ static bool do_addsub_ext(DisasContext *s, arg_addsub_ext *a,
         /* Materialized ADDS rd - can look for both ADC and ADCS */
         materialized_adc_add = a64_find_adjacent_plain_adc(s, true);
     }
+
+    need_pending_record =
+        ((compare_like && a64_compare_like_producer_needs_adjacent_pending(s)) ||
+         lazy_condsel_rechain_cmp ||
+         lazy_fcsel_cmp ||
+         lazy_sbc_cmp || lazy_adc_add ||
+         materialized_sbc_sub || materialized_adc_add);
+    need_main_flags_publish =
+        ((lazy_bcond_cmp && gap_insns > 0) ||
+         lazy_condsel_cmp || lazy_ccmp_cmp || lazy_fccmp_cmp);
 
     /* non-flag setting ops may use SP */
     if (!setflags) {
@@ -13386,10 +13505,7 @@ static bool do_addsub_ext(DisasContext *s, arg_addsub_ext *a,
         }
     }
 
-    if (lazy_bcond_cmp || lazy_condsel_cmp || lazy_ccmp_cmp ||
-        lazy_fcsel_cmp || lazy_fccmp_cmp ||
-        lazy_sbc_cmp || lazy_adc_add ||
-        materialized_sbc_sub || materialized_adc_add) {
+    if (need_pending_record) {
         A64PendingCCProducerKind kind = A64_PENDING_CC_REWINDABLE_CMP;
         uint32_t cc_op = sub_op ? (a->sf ? A64_X86_CC_SUB64
                                          : A64_X86_CC_SUB32)
@@ -13400,21 +13516,18 @@ static bool do_addsub_ext(DisasContext *s, arg_addsub_ext *a,
                                  NULL,
                                  tcg_last_op(),
                                  cc_op,
-                                 (lazy_bcond_cmp || lazy_condsel_cmp ||
-                                  lazy_ccmp_cmp || lazy_fcsel_cmp ||
-                                  lazy_fccmp_cmp) ?
-                                 gap_insns : 0);
+                                 lazy_condsel_rechain_cmp
+                                 ? condsel_rechain_gap_insns
+                                 : (lazy_fcsel_cmp ? gap_insns : 0));
         if (materialized_adc_add) {
             kind = A64_PENDING_CC_MATERIALIZED_ADD;
         } else if (materialized_sbc_sub) {
             kind = A64_PENDING_CC_MATERIALIZED_SUB;
         }
         s->a64_pending_cc.kind = kind;
-        if ((lazy_bcond_cmp && gap_insns > 0) ||
-            lazy_condsel_cmp ||
-            lazy_ccmp_cmp || lazy_fccmp_cmp) {
-            a64_publish_addsub_main_flags(s, a->sf, tcg_rn, tcg_rm, sub_op);
-        }
+    }
+    if (need_main_flags_publish) {
+        a64_publish_addsub_main_flags(s, a->sf, tcg_rn, tcg_rm, sub_op);
     }
     return true;
 }
@@ -13434,6 +13547,7 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
     bool lazy_fccmp_cmp = false;
     bool lazy_sbc_cmp = false;
     bool lazy_adc_add = false;
+    bool lazy_condsel_rechain_cmp = false;
     bool materialized_condsel_add = false;
     bool materialized_condsel_sub = false;
     bool materialized_fcsel_add = false;
@@ -13444,7 +13558,11 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
     bool materialized_ccmp_sub = false;
     bool materialized_sbc_sub = false;
     bool materialized_adc_add = false;
+    bool compare_like = setflags && a->rd == 31;
+    bool need_pending_record = false;
+    bool need_main_flags_publish = false;
     uint8_t gap_insns = 0;
+    uint8_t condsel_rechain_gap_insns = 0;
     int future_bcond_cc = -1;
     TCGv_i64 tcg_rd = NULL, tcg_rn, tcg_rm, tcg_result;
 
@@ -13453,6 +13571,10 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
     }
 
     if (setflags && sub_op && a->rd == 31) {
+        lazy_condsel_rechain_cmp =
+            a64_find_future_condsel_rechain_gap(s,
+                                                &condsel_rechain_gap_insns,
+                                                NULL);
         lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns, NULL);
         if (!lazy_bcond_cmp) {
             lazy_condsel_cmp = a64_find_future_condsel_gap(s, &gap_insns,
@@ -13485,6 +13607,10 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
             lazy_sbc_cmp = a64_find_adjacent_plain_sbc_cmp(s);
         }
     } else if (setflags && !sub_op && a->rd == 31) {
+        lazy_condsel_rechain_cmp =
+            a64_find_future_condsel_rechain_gap(s,
+                                                &condsel_rechain_gap_insns,
+                                                NULL);
         lazy_bcond_cmp = a64_find_future_bcond_gap(s, &gap_insns,
                                                    &future_bcond_cc);
         if (lazy_bcond_cmp &&
@@ -13589,6 +13715,24 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
         }
     }
 
+    need_pending_record =
+        ((compare_like && a64_compare_like_producer_needs_adjacent_pending(s)) ||
+         lazy_condsel_rechain_cmp ||
+         lazy_fcsel_cmp ||
+         lazy_sbc_cmp || lazy_adc_add ||
+         materialized_condsel_add ||
+         materialized_fcsel_add ||
+         materialized_fccmp_add ||
+         materialized_ccmp_add ||
+         materialized_condsel_sub ||
+         materialized_fcsel_sub ||
+         materialized_fccmp_sub ||
+         materialized_ccmp_sub ||
+         materialized_sbc_sub || materialized_adc_add);
+    need_main_flags_publish =
+        ((lazy_bcond_cmp && gap_insns > 0) ||
+         lazy_condsel_cmp || lazy_ccmp_cmp || lazy_fccmp_cmp);
+
     if (!setflags || (!lazy_bcond_cmp && !lazy_condsel_cmp &&
                       !lazy_fcsel_cmp && !lazy_fccmp_cmp &&
                       !lazy_ccmp_cmp &&
@@ -13634,18 +13778,7 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
         }
     }
 
-    if (lazy_bcond_cmp || lazy_condsel_cmp || lazy_ccmp_cmp ||
-        lazy_fcsel_cmp || lazy_fccmp_cmp ||
-        lazy_sbc_cmp || lazy_adc_add ||
-        materialized_condsel_add ||
-        materialized_fcsel_add ||
-        materialized_fccmp_add ||
-        materialized_ccmp_add ||
-        materialized_condsel_sub ||
-        materialized_fcsel_sub ||
-        materialized_fccmp_sub ||
-        materialized_ccmp_sub ||
-        materialized_sbc_sub || materialized_adc_add) {
+    if (need_pending_record) {
         A64PendingCCProducerKind kind = A64_PENDING_CC_REWINDABLE_CMP;
 
         a64_record_cmp_for_bcond(s, a->sf, tcg_rn, tcg_rm,
@@ -13655,18 +13788,18 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
                                                  : A64_X86_CC_SUB32)
                                          : (a->sf ? A64_X86_CC_ADD64
                                                   : A64_X86_CC_ADD32),
-                                 (lazy_bcond_cmp || lazy_condsel_cmp ||
-                                  lazy_ccmp_cmp || lazy_fcsel_cmp ||
-                                  materialized_condsel_add ||
-                                  materialized_fcsel_add ||
-                                  materialized_fccmp_add ||
-                                  materialized_ccmp_add ||
-                                  materialized_condsel_sub ||
-                                  materialized_fcsel_sub ||
-                                  materialized_fccmp_sub ||
-                                  materialized_ccmp_sub ||
-                                  lazy_fccmp_cmp) ?
-                                 gap_insns : 0);
+                                 lazy_condsel_rechain_cmp
+                                 ? condsel_rechain_gap_insns
+                                 : ((lazy_fcsel_cmp ||
+                                     materialized_condsel_add ||
+                                     materialized_fcsel_add ||
+                                     materialized_fccmp_add ||
+                                     materialized_ccmp_add ||
+                                     materialized_condsel_sub ||
+                                     materialized_fcsel_sub ||
+                                     materialized_fccmp_sub ||
+                                     materialized_ccmp_sub)
+                                    ? gap_insns : 0));
         if (materialized_condsel_add || materialized_fcsel_add ||
             materialized_fccmp_add || materialized_ccmp_add ||
             materialized_adc_add) {
@@ -13677,11 +13810,9 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
             kind = A64_PENDING_CC_MATERIALIZED_SUB;
         }
         s->a64_pending_cc.kind = kind;
-        if ((lazy_bcond_cmp && gap_insns > 0) ||
-            lazy_condsel_cmp ||
-            lazy_ccmp_cmp || lazy_fccmp_cmp) {
-            a64_publish_addsub_main_flags(s, a->sf, tcg_rn, tcg_rm, sub_op);
-        }
+    }
+    if (need_main_flags_publish) {
+        a64_publish_addsub_main_flags(s, a->sf, tcg_rn, tcg_rm, sub_op);
     }
     return true;
 }

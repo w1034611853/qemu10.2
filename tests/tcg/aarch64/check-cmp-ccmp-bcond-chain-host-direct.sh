@@ -183,7 +183,7 @@ assert_chain_positive()
     local ccmp_sym=$3
     local branch_sym=$4
 
-    assert_record "$label old producer" "$producer_sym"
+    assert_no_record "$label old producer" "$producer_sym"
     assert_no_use "$label old producer" "$producer_sym"
 
     assert_record "$label new producer" "$ccmp_sym"
@@ -199,7 +199,7 @@ assert_gap_fallback()
     local producer_sym=$2
     local ccmp_sym=$3
 
-    assert_record "$label old producer" "$producer_sym"
+    assert_no_record "$label old producer" "$producer_sym"
     assert_no_use "$label old producer" "$producer_sym"
     assert_no_record "$label new producer" "$ccmp_sym"
     assert_case_contains "$label ccmp block" "$ccmp_sym" 'mov_i32 x86_raw_flags'

@@ -173,7 +173,7 @@ assert_chain_positive()
     local second_csel_sym=$5
     local branch_sym=$6
 
-    assert_record "$label old producer" "$producer_sym"
+    assert_no_record "$label old producer" "$producer_sym"
     assert_no_use "$label old producer" "$producer_sym"
 
     assert_record "$label ccmp producer" "$ccmp_sym"
@@ -203,14 +203,11 @@ assert_gap_fallback()
     local first_csel_sym=$4
     local second_csel_sym=$5
 
-    assert_record "$label old producer" "$producer_sym"
+    assert_no_record "$label old producer" "$producer_sym"
     assert_no_use "$label old producer" "$producer_sym"
 
     assert_record "$label ccmp producer" "$ccmp_sym"
-    assert_use "$label ccmp producer" "$ccmp_sym" "$first_csel_sym" 1 \
-        "CSEL-CCMP-pending"
-    assert_retire "$label ccmp producer" "$ccmp_sym" "$first_csel_sym" 1 \
-        "CSEL-CCMP-pending"
+    assert_no_use "$label ccmp producer" "$ccmp_sym"
 
     assert_no_record "$label first csel producer" "$first_csel_sym"
     assert_no_record "$label second csel producer" "$second_csel_sym"

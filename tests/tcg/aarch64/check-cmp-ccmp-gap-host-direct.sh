@@ -121,6 +121,3 @@ assert_positive "cmp ccmn true gap8" \
     cmp_ccmn_true_gap8_producer
 
 assert_no_use "cmp ccmp bad gap" cmp_ccmp_bad_gap_producer
-
-rg -q 'A64 cmp-pending summary tb_pc=0x' "$log" \
-    || die "expected at least one cmp-pending summary marker"

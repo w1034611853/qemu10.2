@@ -214,7 +214,7 @@ assert_gap_fallback()
     local first_csel_sym=$3
     local second_csel_sym=$4
 
-    assert_record "$label old producer" "$producer_sym"
+    assert_no_record "$label old producer" "$producer_sym"
     assert_no_use "$label old producer" "$producer_sym"
     assert_no_record "$label first reseed" "$first_csel_sym"
     assert_no_record "$label second reseed" "$second_csel_sym"

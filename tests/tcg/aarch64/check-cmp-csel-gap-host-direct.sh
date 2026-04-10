@@ -265,6 +265,3 @@ assert_main_repr_positive "cmp csetm hi gap4" \
     cmp_csetm_hi_gap4_producer cmp_csetm_hi_gap4_consumer 'negsetcond_i64'
 
 assert_no_use "cmp csel bad gap" cmp_csel_bad_gap_producer
-
-rg -q 'A64 cmp-pending summary tb_pc=0x' "$log" \
-    || die "expected at least one cmp-pending summary marker"

@@ -2148,3 +2148,117 @@ Current local conclusion:
 - the remaining work is no longer "another plain gap consumer migration";
   it is mostly about shrinking older producer-chaining sidecars and deciding
   how much of the adjacent specialized path still deserves to stay distinct
+
+## 2026-04-10 Deferred-Flags Main-Representation Slice: compare-like producer sidecar shrink
+
+This slice shrank old compare-like producer-side `pending_cc` usage so plain
+downstream cases now rely on current main flags state by default, while the
+still-useful adjacent specialized paths remain explicit and narrow.
+
+What changed:
+
+- compare-like `CMP/CMN` and `SUBS/ADDS rd==xzr` producer routing now splits
+  two concerns that were previously bundled:
+  - publishing durable `RAW/SPLIT` main flags for plain downstream readers
+  - recording old producer-side `pending_cc` for the few adjacent chain shapes
+    that still benefit from it
+- plain downstream cases no longer drag old compare-like producer sidecars
+  along by default:
+  - plain gap `B.cond`
+  - plain gap `CSEL/CS*`
+  - plain gap `ADC/SBC`
+  - plain `CCMP/FCCMP`
+- one narrow compare-like exception remains on purpose:
+  - `cmp -> [gap-safe insns] -> csel -> ...` still keeps the old producer
+    alive when that `CSEL/CS*` is immediately followed by another
+    rechain-positive consumer (`B.cond`, `CSEL/CS*`, or `CCMP/CCMN`)
+  - the producer-side record now carries the real pre-`CSEL` gap budget for
+    this case, instead of being accidentally forced down to zero
+- `CCMP`-family chains now consistently start from the new `CCMP` producer,
+  not from the original compare-like producer:
+  - `cmp -> ccmp -> ...` old producers are no longer required to record
+  - downstream `B.cond` / `CSEL` / `CCMP` continue from the fresh
+    `CCMP` producer when they stay on the narrow adjacent chain
+- chain/fallback focused checkers were tightened to match the new contract:
+  - `cmp -> csel -> ...` positive chains still require old-producer
+    `CSEL-pending` consume
+  - `... -> csel gap -> ... fallback` now requires `no_record` for the old
+    compare-like producer
+  - `cmp -> ccmp -> ...` positive and fallback chains now require
+    `no_record/no_use` for the old compare-like producer
+  - deeper `... -> ccmp -> csel gap -> ...` fallbacks now require the
+    preceding `CCMP` producer to drop at the `CSEL` boundary instead of being
+    consumed through `CSEL-CCMP-pending`
+
+Why this slice matters:
+
+- it removes another large miss-sensitive class of bookkeeping from the old
+  sidecar model:
+  - plain downstream readers no longer pay for producer-side pairwise state
+    that they do not consume
+- it preserves the rechain paths that still produce clear value, but makes
+  them deliberate:
+  - adjacent and immediately rechain-positive shapes stay narrow and testable
+  - gap fallback shapes now cleanly fall back to current main representation
+- it exposes a clearer architectural split:
+  - compare-like sidecars are now a specialized adjacent optimization
+  - `RAW/SPLIT` main flags are the default durable representation
+
+Verification after this slice:
+
+- focused plain-gap checks:
+  - `check-cmp-bcond-gap-host-direct.sh`: `PASS`
+  - `check-cmp-csel-gap-host-direct.sh`: `PASS`
+  - `check-adc-sbc-host-direct.sh`: `PASS`
+  - `check-cmp-ccmp-gap-host-direct.sh`: `PASS`
+  - `check-cmp-fccmp-gap-host-direct.sh`: `PASS`
+- focused chain checks:
+  - `check-cmp-csel-bcond-chain-host-direct.sh`: `PASS`
+  - `check-cmp-csel-ccmp-chain-host-direct.sh`: `PASS`
+  - `check-cmp-csel-csel-chain-host-direct.sh`: `PASS`
+  - `check-cmp-ccmp-bcond-chain-host-direct.sh`: `PASS`
+  - `check-cmp-ccmp-ccmp-chain-host-direct.sh`: `PASS`
+  - `check-cmp-ccmp-csel-bcond-chain-host-direct.sh`: `PASS`
+  - `check-cmp-ccmp-csel-csel-chain-host-direct.sh`: `PASS`
+  - `check-cmp-ccmp-csel-ccmp-chain-host-direct.sh`: `PASS`
+  - `check-cmp-ccmp-ccmp-csel-bcond-chain-host-direct.sh`: `PASS`
+  - `check-cmp-ccmp-ccmp-ccmp-chain-host-direct.sh`: `PASS`
+  - `check-cmp-ccmp-ccmp-ccmp-csel-bcond-chain-host-direct.sh`: `PASS`
+- shared regressions:
+  - `nzcv-status4`: `PASS`
+  - `check-nzcv-status4-raw-ccop-specialization.sh`: `PASS`
+- `git diff --check`: clean
+- SPEC CPU2017 `test` smoke using `config/qemu_aarch64_tcg.cfg` with the
+  current main-branch `build-aarch64-linux-user/qemu-aarch64`:
+  - `502.gcc_r`: `Success`
+  - `505.mcf_r`: `Success`
+  - `531.deepsjeng_r`: `Success`
+  - `541.leela_r`: `Success`
+  - `557.xz_r`: harness anomaly, not yet code-cleared
+  - result bundle: `CPU2017.109.*`
+  - log: `/home/wangruoyu/cpuspec2017/result/CPU2017.109.log`
+  - standalone rerun: `CPU2017.110.*`
+  - log: `/home/wangruoyu/cpuspec2017/result/CPU2017.110.log`
+
+`557.xz_r` note:
+
+- both `CPU2017.109` and the standalone `CPU2017.110` rerun show
+  `specinvoke` stopping early because of a negative elapsed-time anomaly in
+  `speccmds.out`, for example:
+  - `CPU2017.109`: `ERROR: negative elapsed time detected: s=-2 nsec=184596000`
+  - `CPU2017.110`: `ERROR: negative elapsed time detected: s=-1 nsec=74553000`
+- the failure mode is run-harness level, not a direct guest-code mismatch:
+  - `CPU2017.109` executed all `4-*` subcommands and only `1-0`, then ended
+    the run early
+  - `CPU2017.110` stopped after the first `4-0` subcommand
+  - missing `.out` files are the direct reason compare failed
+
+Current local conclusion:
+
+- compare-like producer-side `pending_cc` is now much closer to its intended
+  long-term role:
+  - a narrow adjacent/rechain optimization
+  - not the default carrier for plain downstream readers
+- the remaining follow-up is mostly about how much of the old adjacent chain
+  machinery still deserves to survive as a distinct fast path, now that plain
+  readers are already on main representation
