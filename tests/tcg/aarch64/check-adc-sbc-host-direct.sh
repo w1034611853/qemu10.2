@@ -112,6 +112,18 @@ assert_no_pending_use_via()
     fi
 }
 
+assert_no_pending_record()
+{
+    local label=$1
+    local producer_sym=$2
+    local producer_addr
+
+    producer_addr=$(sym_addr "$producer_sym")
+    if rg -q "A64 cmp-pending record pc=0x${producer_addr}\\b" "$op_log"; then
+        die "unexpected cmp-pending record for $label"
+    fi
+}
+
 [ $# -eq 2 ] || die "usage: $0 <qemu-bin> <exe>"
 
 qemu_bin=$1
@@ -3520,6 +3532,9 @@ assert_no_pending_use_via \
     block_cmn_adc64_gap1_producer \
     block_cmn_adc64_gap1_consumer \
     "ADC-x86-add-adc"
+assert_no_pending_record \
+    "cmn gap adc64" \
+    block_cmn_adc64_gap1_producer
 assert_op_case_contains \
     "cmn gap adc64" \
     block_cmn_adc64_gap1_consumer \
@@ -3530,6 +3545,9 @@ assert_no_pending_use_via \
     block_cmp_sbc64_gap1_producer \
     block_cmp_sbc64_gap1_consumer \
     "SBC-x86-cmp-sbb"
+assert_no_pending_record \
+    "cmp gap sbc64" \
+    block_cmp_sbc64_gap1_producer
 assert_op_case_contains \
     "cmp gap sbc64" \
     block_cmp_sbc64_gap1_consumer \

@@ -67,6 +67,18 @@ assert_record()
         || die "expected cmp-pending record for $label"
 }
 
+assert_no_record()
+{
+    local label=$1
+    local producer_sym=$2
+    local producer_addr
+
+    producer_addr=$(sym_addr "$producer_sym")
+    if rg -q "A64 cmp-pending record pc=0x${producer_addr}\\b" "$log"; then
+        die "unexpected cmp-pending record for $label"
+    fi
+}
+
 assert_use()
 {
     local label=$1
@@ -183,7 +195,7 @@ assert_main_repr_positive()
     local consumer_sym=$3
     local op_pattern=$4
 
-    assert_record "$label" "$producer_sym"
+    assert_no_record "$label" "$producer_sym"
     assert_no_use "$label" "$producer_sym"
     assert_case_contains "$label" "$consumer_sym" 'x86_raw_flags'
     assert_case_contains "$label" "$consumer_sym" "$op_pattern"

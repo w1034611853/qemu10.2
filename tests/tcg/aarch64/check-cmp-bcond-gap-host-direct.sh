@@ -143,6 +143,18 @@ assert_record()
         || die "expected cmp-pending record for $label"
 }
 
+assert_no_record()
+{
+    local label=$1
+    local producer_sym=$2
+    local producer_addr
+
+    producer_addr=$(sym_addr "$producer_sym")
+    if rg -q "A64 cmp-pending record pc=0x${producer_addr}\\b" "$log"; then
+        die "unexpected cmp-pending record for $label"
+    fi
+}
+
 assert_use()
 {
     local label=$1
@@ -240,24 +252,25 @@ assert_main_rep_unrecorded_positive()
     local producer_sym=$2
     local branch_sym=$3
 
+    assert_no_record "$label" "$producer_sym"
     assert_no_use "$label" "$producer_sym"
     assert_main_rep_branch_block "$label" "$branch_sym"
 }
 
-assert_main_rep_positive "cmp gap1" cmp_gap1_producer cmp_gap1_branch
-assert_main_rep_positive "subs gap4" subs_gap4_producer subs_gap4_branch
-assert_main_rep_positive "cmp gap8" cmp_gap8_producer cmp_gap8_branch
-assert_main_rep_positive "cmn gap1" cmn_gap1_producer cmn_gap1_branch
-assert_main_rep_positive "adds gap4" adds_gap4_producer adds_gap4_branch
-assert_main_rep_positive "cmn gap8" cmn_gap8_producer cmn_gap8_branch
-assert_main_rep_positive "cmn cs gap1" cmn_cs_gap1_producer cmn_cs_gap1_branch
-assert_main_rep_positive "adds cc gap1" adds_cc_gap1_producer adds_cc_gap1_branch
-assert_main_rep_positive "cmn hi gap4" cmn_hi_gap4_producer cmn_hi_gap4_branch
-assert_main_rep_positive "adds ls gap4" adds_ls_gap4_producer adds_ls_gap4_branch
-assert_main_rep_positive "cmn vs gap1" cmn_vs_gap1_producer cmn_vs_gap1_branch
-assert_main_rep_positive "adds vc gap4" adds_vc_gap4_producer adds_vc_gap4_branch
-assert_main_rep_positive "cmn mi gap4" cmn_mi_gap4_producer cmn_mi_gap4_branch
-assert_main_rep_positive "adds pl gap1" adds_pl_gap1_producer adds_pl_gap1_branch
+assert_main_rep_unrecorded_positive "cmp gap1" cmp_gap1_producer cmp_gap1_branch
+assert_main_rep_unrecorded_positive "subs gap4" subs_gap4_producer subs_gap4_branch
+assert_main_rep_unrecorded_positive "cmp gap8" cmp_gap8_producer cmp_gap8_branch
+assert_main_rep_unrecorded_positive "cmn gap1" cmn_gap1_producer cmn_gap1_branch
+assert_main_rep_unrecorded_positive "adds gap4" adds_gap4_producer adds_gap4_branch
+assert_main_rep_unrecorded_positive "cmn gap8" cmn_gap8_producer cmn_gap8_branch
+assert_main_rep_unrecorded_positive "cmn cs gap1" cmn_cs_gap1_producer cmn_cs_gap1_branch
+assert_main_rep_unrecorded_positive "adds cc gap1" adds_cc_gap1_producer adds_cc_gap1_branch
+assert_main_rep_unrecorded_positive "cmn hi gap4" cmn_hi_gap4_producer cmn_hi_gap4_branch
+assert_main_rep_unrecorded_positive "adds ls gap4" adds_ls_gap4_producer adds_ls_gap4_branch
+assert_main_rep_unrecorded_positive "cmn vs gap1" cmn_vs_gap1_producer cmn_vs_gap1_branch
+assert_main_rep_unrecorded_positive "adds vc gap4" adds_vc_gap4_producer adds_vc_gap4_branch
+assert_main_rep_unrecorded_positive "cmn mi gap4" cmn_mi_gap4_producer cmn_mi_gap4_branch
+assert_main_rep_unrecorded_positive "adds pl gap1" adds_pl_gap1_producer adds_pl_gap1_branch
 assert_main_rep_positive "adcs cs gap1" adcs_cs_gap1_producer adcs_cs_gap1_branch
 assert_main_rep_positive "adcs cc gap1" adcs_cc_gap1_producer adcs_cc_gap1_branch
 assert_main_rep_positive "adcs hi gap4" adcs_hi_gap4_producer adcs_hi_gap4_branch

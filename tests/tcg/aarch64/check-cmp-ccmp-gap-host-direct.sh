@@ -64,6 +64,18 @@ assert_record()
         || die "expected cmp-pending record for $label"
 }
 
+assert_no_record()
+{
+    local label=$1
+    local producer_sym=$2
+    local producer_addr
+
+    producer_addr=$(sym_addr "$producer_sym")
+    if rg -q "A64 cmp-pending record pc=0x${producer_addr}\\b" "$log"; then
+        die "unexpected cmp-pending record for $label"
+    fi
+}
+
 assert_use()
 {
     local label=$1
@@ -97,7 +109,7 @@ assert_positive()
     local label=$1
     local producer_sym=$2
 
-    assert_record "$label" "$producer_sym"
+    assert_no_record "$label" "$producer_sym"
     assert_no_use "$label" "$producer_sym"
 }
 
