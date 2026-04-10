@@ -1,6 +1,10 @@
     .text
     .global _start
 
+    .macro safe_gap_1
+    nop
+    .endm
+
 _start:
     mov     x5, #9
     mov     x6, #3
@@ -221,6 +225,8 @@ _start:
     bl      block_sbcs_sbcs32
     bl      block_adcs32_adc64
     bl      block_sbcs_xzr_priority
+    bl      block_cmn_adc64_gap1
+    bl      block_cmp_sbc64_gap1
     bl      block_cmn_adcs64_adjacent   // CMN->ADCS truly adjacent (narrowed)
     bl      block_cmp_sbcs64_adjacent   // CMP->SBCS truly adjacent (narrowed)
 
@@ -623,6 +629,36 @@ block_sbcs_xzr_priority:
     mov     x5, #0
     adc     x6, x5, x5         // 0+0+C = C, should be 1
     cmp     x6, #1
+    b.ne    fail
+    ret
+
+// Plain ADC gap case: carry should come from durable main flags, not pending consume
+block_cmn_adc64_gap1:
+    mov     x5, #9
+    mov     x6, #3
+    movn    x0, #0
+    mov     x1, #1
+block_cmn_adc64_gap1_producer:
+    cmn     x0, x1
+    safe_gap_1
+block_cmn_adc64_gap1_consumer:
+    adc     x7, x5, x6
+    cmp     x7, #13
+    b.ne    fail
+    ret
+
+// Plain SBC gap case: borrow should come from durable main flags, not pending consume
+block_cmp_sbc64_gap1:
+    mov     x5, #9
+    mov     x6, #3
+    mov     x0, #5
+    mov     x1, #3
+block_cmp_sbc64_gap1_producer:
+    cmp     x0, x1
+    safe_gap_1
+block_cmp_sbc64_gap1_consumer:
+    sbc     x8, x5, x6
+    cmp     x8, #6
     b.ne    fail
     ret
 

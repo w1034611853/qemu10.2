@@ -2075,3 +2075,76 @@ Current local conclusion:
 - the remaining obvious main-representation consumer slice is plain
   `ADC/SBC`, with the same rule: keep truly adjacent hot paths narrow, pull
   gap consumers onto `RAW/SPLIT`
+
+## 2026-04-10 Deferred-Flags Main-Representation Slice: plain `ADC/SBC`
+
+This slice moved the remaining plain gap `ADC/SBC` carry/borrow consumers onto
+the current main flags representation, without widening the older adjacent
+`ADCS/SBCS` narrow path.
+
+What changed:
+
+- plain gap `ADC/SBC` continues to read carry/borrow through
+  `a64_get_current_carry_flag()`:
+  - no new consumer-side pairwise pending contract was introduced
+- compare-like add producers now default to direct `RAW` main flags when they
+  do not match one of the older narrow pending paths:
+  - `CMN` / `ADDS xzr` now publish durable `RAW` state instead of falling back
+    to eager split flags in the common miss case
+  - this makes gap `CMN -> ADC` behave like existing gap `CMP -> SBC`: the
+    later consumer simply reads the current main representation
+- the old adjacent-only direct path remains intentionally narrow:
+  - truly adjacent compare-like `CMN/CMP -> ADCS/SBCS` still use the existing
+    pending/direct helper path
+  - this slice does not try to widen that contract
+
+Focused checker change:
+
+- `tests/tcg/aarch64/adc-sbc-host-direct.S` now includes explicit gap
+  positives:
+  - `block_cmn_adc64_gap1`
+  - `block_cmp_sbc64_gap1`
+- `tests/tcg/aarch64/check-adc-sbc-host-direct.sh` now verifies the new
+  boundary:
+  - plain gap `CMN -> ADC` and `CMP -> SBC` must not consume old pending
+    producers via `ADC-x86-add-adc` / `SBC-x86-cmp-sbb`
+  - the consumer OP blocks must read `x86_raw_flags`
+
+Why this slice matters:
+
+- it removes the last obvious plain carry/borrow gap consumer from the older
+  pairwise pending model
+- it fixes the asymmetric miss-case behavior between compare-like `CMP` and
+  compare-like `CMN`:
+  - `CMP` miss cases were already durable-RAW friendly
+  - `CMN` miss cases were still paying eager split-flags cost
+- it keeps the adjacent `ADCS/SBCS` hot path separate, so we improve the
+  miss-case without blurring the narrow fast path
+
+Verification after this slice:
+
+- focused `ADC/SBC` checks:
+  - `check-adc-sbc-host-direct.sh`
+- shared regressions:
+  - `check-nzcv-status4-raw-ccop-specialization.sh`: `PASS`
+  - `check-cmp-ccmp-bcond-chain-host-direct.sh`: `PASS`
+  - `check-cmp-csel-ccmp-chain-host-direct.sh`: `PASS`
+  - `check-cmp-ccmp-csel-ccmp-chain-host-direct.sh`: `PASS`
+- SPEC CPU2017 `test` smoke using `config/qemu_aarch64_tcg.cfg` with the
+  current main-branch `build-aarch64-linux-user/qemu-aarch64`:
+  - `502.gcc_r`: `Success`
+  - `505.mcf_r`: `Success`
+  - `531.deepsjeng_r`: `Success`
+  - `541.leela_r`: `Success`
+  - `557.xz_r`: `Success`
+  - result bundle: `CPU2017.108.*`
+  - log: `/home/wangruoyu/cpuspec2017/result/CPU2017.108.log`
+
+Current local conclusion:
+
+- plain gap `ADC/SBC` now joins `CCMP/FCCMP`, plain gap `B.cond`, and plain
+  gap `CSEL/CS*` in reading current `RAW/SPLIT` main representation instead of
+  requiring old producer/consumer pairing
+- the remaining work is no longer "another plain gap consumer migration";
+  it is mostly about shrinking older producer-chaining sidecars and deciding
+  how much of the adjacent specialized path still deserves to stay distinct

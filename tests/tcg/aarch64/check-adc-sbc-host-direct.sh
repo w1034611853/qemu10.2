@@ -34,6 +34,84 @@ phase_a2_assert_single_out()
     fi
 }
 
+sym_addr()
+{
+    local sym=$1
+
+    awk -v sym="$sym" '
+    $3 == sym {
+        addr = tolower($1);
+        sub(/^0+/, "", addr);
+        if (addr == "") {
+            addr = "0";
+        }
+        print addr;
+        found = 1;
+        exit 0;
+    }
+    END {
+        exit(found ? 0 : 1);
+    }
+    ' "$nm_log" || die "failed to resolve symbol $sym in $exe"
+}
+
+extract_op_case_block()
+{
+    local label=$1
+    local case_sym=$2
+    local case_addr
+    local start_line
+    local block
+
+    case_addr=$(sym_addr "$case_sym")
+    block="${exe}.${label}.op"
+    start_line=$(rg -n -m1 "^ ---- 0*${case_addr} " "$op_log" | cut -d: -f1) \
+        || die "failed to locate OP block for $label"
+
+    awk -v start="$start_line" '
+    NR >= start {
+        if (NR > start && /^----------------$/) {
+            exit 0;
+        }
+        print;
+    }
+    END {
+        exit(start ? 0 : 1);
+    }
+    ' "$op_log" >"$block" || die "failed to extract OP block for $label"
+
+    echo "$block"
+}
+
+assert_op_case_contains()
+{
+    local label=$1
+    local case_sym=$2
+    local pattern=$3
+    local block
+
+    block=$(extract_op_case_block "$label" "$case_sym")
+    rg -q "$pattern" "$block" \
+        || die "expected pattern '$pattern' in $label OP block"
+}
+
+assert_no_pending_use_via()
+{
+    local label=$1
+    local producer_sym=$2
+    local consumer_sym=$3
+    local via=$4
+    local producer_addr
+    local consumer_addr
+
+    producer_addr=$(sym_addr "$producer_sym")
+    consumer_addr=$(sym_addr "$consumer_sym")
+    if rg -q "A64 cmp-pending use producer_pc=0x${producer_addr} consumer_pc=0x${consumer_addr} .* via=${via}" \
+        "$op_log"; then
+        die "unexpected cmp-pending use via=${via} for $label"
+    fi
+}
+
 [ $# -eq 2 ] || die "usage: $0 <qemu-bin> <exe>"
 
 qemu_bin=$1
@@ -50,6 +128,8 @@ case "$host_arch" in
 esac
 
 log="${exe}.outasm.log"
+op_log="${exe}.op.log"
+nm_log="${exe}.nm"
 cmn_adc_block="${exe}.cmn_adc.block"
 cmn_adc32_block="${exe}.cmn_adc32.block"
 adds_adc_block="${exe}.adds_adc.block"
@@ -87,7 +167,7 @@ sbcs_sbc32_block="${exe}.sbcs_sbc32.block"
 sbcs_sbcs_block="${exe}.sbcs_sbcs.block"
 sbcs_sbcs32_block="${exe}.sbcs_sbcs32.block"
 adcs32_adc64_block="${exe}.adcs32_adc64.block"
-rm -f "$log"
+rm -f "$log" "$op_log" "$nm_log"
 rm -f "$cmn_adc_block"
 rm -f "$cmn_adc32_block"
 rm -f "$adds_adc_block"
@@ -130,6 +210,11 @@ compare_like_ext_decode_re='\bshr[lq]\b|\band[lq]\b|\bxor[lq]\b|\bnot[lq]\b|\bse
 
 "$qemu_bin" -d in_asm,out_asm,nochain -D "$log" "$exe" >/dev/null 2>&1 \
     || die "running $exe under $qemu_bin failed"
+
+"$qemu_bin" -d op,in_asm,nochain -D "$op_log" "$exe" >/dev/null 2>&1 \
+    || die "running $exe under $qemu_bin for OP log failed"
+
+nm -n "$exe" >"$nm_log" || die "failed to collect symbols for $exe"
 
 awk '
 BEGIN {
@@ -3429,3 +3514,25 @@ echo "  - Materialized ADCS/ADCS32->ADC and SBCS/SBCS32->SBC use direct phase A1
 echo "  - Materialized ADCS/ADCS32->ADCS and SBCS/SBCS32->SBCS use direct phase A2 shape (adc/adc, sbb/sbb without decode glue)"
 echo "  - Mixed-width ADCS32->ADC64 stays outside the supported same-width compact direct shape"
 echo "  - Truly adjacent compare-like CMN->ADCS and CMP->SBCS use fallback carry/borrow seeding before the consumer adc/sbb"
+
+assert_no_pending_use_via \
+    "cmn gap adc64" \
+    block_cmn_adc64_gap1_producer \
+    block_cmn_adc64_gap1_consumer \
+    "ADC-x86-add-adc"
+assert_op_case_contains \
+    "cmn gap adc64" \
+    block_cmn_adc64_gap1_consumer \
+    'x86_raw_flags'
+
+assert_no_pending_use_via \
+    "cmp gap sbc64" \
+    block_cmp_sbc64_gap1_producer \
+    block_cmp_sbc64_gap1_consumer \
+    "SBC-x86-cmp-sbb"
+assert_op_case_contains \
+    "cmp gap sbc64" \
+    block_cmp_sbc64_gap1_consumer \
+    'x86_raw_flags'
+
+echo "  - Plain gap CMN->ADC and CMP->SBC read current main representation instead of consuming old pending producers"

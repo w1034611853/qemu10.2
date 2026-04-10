@@ -9200,8 +9200,7 @@ static bool do_addsub_imm(DisasContext *s, arg_rri_sf *a,
             if (!lazy_bcond_cmp && !lazy_condsel_cmp &&
                 !lazy_fcsel_cmp && !lazy_fccmp_cmp &&
                 !lazy_ccmp_cmp && !lazy_adc_add) {
-                gen_add_CC(s, a->sf, tcg_result, tcg_rn, tcg_imm,
-                           a->rd != 31);
+                gen_add_CC(s, a->sf, tcg_result, tcg_rn, tcg_imm, true);
             }
         }
     }
@@ -13371,8 +13370,7 @@ static bool do_addsub_ext(DisasContext *s, arg_addsub_ext *a,
             if (!lazy_bcond_cmp && !lazy_condsel_cmp &&
                 !lazy_fcsel_cmp && !lazy_fccmp_cmp &&
                 !lazy_ccmp_cmp && !lazy_adc_add) {
-                gen_add_CC(s, a->sf, tcg_result, tcg_rn, tcg_rm,
-                           a->rd != 31);
+                gen_add_CC(s, a->sf, tcg_result, tcg_rn, tcg_rm, true);
             }
         }
     }
@@ -13620,8 +13618,7 @@ static bool do_addsub_reg(DisasContext *s, arg_addsub_shift *a,
             if (!lazy_bcond_cmp && !lazy_condsel_cmp &&
                 !lazy_fcsel_cmp && !lazy_fccmp_cmp &&
                 !lazy_ccmp_cmp && !lazy_adc_add) {
-                gen_add_CC(s, a->sf, tcg_result, tcg_rn, tcg_rm,
-                           a->rd != 31);
+                gen_add_CC(s, a->sf, tcg_result, tcg_rn, tcg_rm, true);
             }
         }
     }
