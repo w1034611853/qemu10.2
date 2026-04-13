@@ -28,37 +28,36 @@ Project focus:
 
 ## Repo State
 
-Main workspace:
-
-- repo: `/home/wangruoyu/qemu10.2`
-- branch: `a64-x86-status4-v10.2.0`
-- current main `HEAD`:
-  `65b9375654` (`docs: update progress after CSEL rework merge`)
-
-Main branch now includes:
-
-- the earlier `adcs-sbcs-producer-direct-v10.2.0` merge
-- the compare-like `CSEL/CS*` rework merge
-
-Latest merged fix commit under that merge:
-
-- `47d27a1bb1` `aarch64: rework compare-like CSEL pending retirement`
-
-Active isolated worktree:
+Active recovery workspace:
 
 - path:
-  `/home/wangruoyu/qemu10.2/.worktrees/adcs-sbcs-producer-direct`
+  `/home/wangruoyu/qemu10.2/.worktrees/positive-recovery-v10.2.0`
 - branch:
-  `adcs-sbcs-producer-direct-v10.2.0`
-- current worktree `HEAD`:
-  `5f350f8f0c` (`aarch64: chain ADCS/SBCS rd into gap floating consumers`)
+  `a64-x86-status4-positive-recovery-v10.2.0`
+- code baseline:
+  `6d40860fef` (`docs: sync progress with functional validation`)
+- recovery intent:
+  restore the performance-positive 2026-04-09 benchmark baseline while keeping
+  later documentation, knowledge-base, and SPEC runbook assets under version
+  control
 
-Repo-local debug worktree cleanup:
+Original main workspace retained for traceability:
 
-- obsolete repo-local `531-*`, `regression-debug`, and
-  `compare-like-csel-cs-baseline` worktrees have been removed
-- the remaining repo-local feature worktree is:
-  `adcs-sbcs-producer-direct-v10.2.0`
+- path: `/home/wangruoyu/qemu10.2`
+- branch: `a64-x86-status4-v10.2.0`
+- latest known bad performance head when recovery started:
+  `0d9ca86126` (`tests: harden cpuspec smoke status checks`)
+
+The recovery branch intentionally excludes later translator/backend/test logic
+commits after `6d40860fef`.  In particular, it does not carry the broad
+deferred-flags main-representation and compare-like sidecar-shrink series that
+turned the latest user-provided SPEC comparison into all-negative results.
+
+The recovery branch does carry later non-performance assets:
+
+- performance reports from 2026-04-03 and 2026-04-09
+- Obsidian knowledge-base design and in-repo `knowledge-base/`
+- CPUSPEC functional/performance runbook and helper scripts
 
 ## What Is Complete
 

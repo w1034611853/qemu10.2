@@ -3,29 +3,32 @@ id: kb-timeline-main
 title: NZCV 优化主时间线
 note_type: timeline
 status: active
-as_of: 2026-04-08
+as_of: 2026-04-13
 created: 2026-04-08
-updated: 2026-04-08
+updated: 2026-04-13
 owner: wangruoyu
 audience:
   - self
   - handoff
-scope: Milestone timeline for the NZCV optimization line from late March to April 8, 2026
+scope: Milestone timeline for the NZCV optimization line from late March to April 13, 2026
 summary: >
   以里程碑方式串起这条线从 direct-consumer 起步到 lazy compare、non-branch family、
-  CSEL rework 和最新 chaining 扩展的主演进轨迹。
+  CSEL rework、chaining 扩展和正收益基线恢复的主演进轨迹。
 tags:
   - timeline
   - milestones
 related_notes:
   - "[[当前状态总览]]"
   - "[[关键回归与修复节点]]"
+  - "[[2026-04-13 正收益基线恢复]]"
 related_commits:
   - 9417f5fde2
   - 3150e645b6
   - 47d27a1bb1
   - 366b7d6ddb
   - 0c9d65605b
+  - 6d40860fef
+  - 0d9ca86126
 source_docs:
   - /home/wangruoyu/qemu10.2/progress.md
 external_sources: []
@@ -33,7 +36,7 @@ verification_status: historical
 verification_refs: []
 confidence: high
 next_actions:
-  - 后续每个阶段合入后补一条里程碑
+  - 在恢复分支上复跑性能基线后补充验证结果
 ---
 
 # NZCV 优化主时间线
@@ -86,3 +89,19 @@ next_actions:
 - `cmp -> csel -> bcond`、`cmp -> csel -> ccmp` 等链式组合有 focused evidence
 - promoted `CCMP/CCMN` producer line 出现更深 adjacent direct handoff
 - `366b7d6ddb` 与 `0c9d65605b` 把 direct paths 与 producer chaining 推到新的 current scheme
+
+## 2026-04-09 到 2026-04-10：broad RAW/main-state 试验
+
+- deferred-flags main-representation 方案试图把更多 miss-case 从旧 `pending_cc`
+  配对迁到当前 flags 表示
+- compare-like producer sidecar shrink 进一步减少旧 sidecar 的默认携带
+- 这条路线在功能验证上能推进，但后续性能结果显示其全局成本过大
+
+## 2026-04-13：恢复到正收益基线
+
+- 最新用户性能对比显示 broad RAW/main-state head 已全面慢于 clean
+- 当前推荐代码基线恢复到 `6d40860fef`，即 2026-04-09 性能报告记录的正收益/接近中性节点
+- 文档、知识库和 CPUSPEC runbook 继续保留
+- 后续优化原则调整为：direct hit-case 优先，RAW/main fallback 只兜底 miss-case
+
+细节见 [[2026-04-13 正收益基线恢复]]。
