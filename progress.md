@@ -2306,6 +2306,8 @@ What changed:
   - builds QEMU and TCG tests by default
   - runs the focused NZCV codegen checks
   - runs SPEC CPU2017 `test` smoke with the wrapper
+  - treats SPEC benchmark `Error:` lines as runner failures even when native
+    `runcpu` exits `0`
 - added `scripts/cpuspec/run-performance-compare.sh`
   - compares optimized QEMU against clean QEMU using train-input commands
   - supports `PERF_BENCHMARKS` and `REPEATS`
@@ -2331,8 +2333,10 @@ Fresh validation:
   - SPEC result: `Success: 1x557.xz_r`
   - initial result bundle: `CPU2017.112.*`
   - latest result bundle after path-tolerant wrapper match: `CPU2017.114.*`
-  - latest log: `/home/wangruoyu/cpuspec2017/result/CPU2017.114.log`
-  - `CPU2017.114.*` generated all 12 expected `cpu2006docs.tar-*.out` files
+  - latest result bundle after runner-side `Error:` output checking:
+    `CPU2017.115.*`
+  - latest log: `/home/wangruoyu/cpuspec2017/result/CPU2017.115.log`
+  - `CPU2017.115.*` generated all 12 expected `cpu2006docs.tar-*.out` files
     and `speccmds.out` had no `negative elapsed` record
 - performance runner short smoke:
   - command: `REPEATS=1 PERF_BENCHMARKS='500.perlbench_r 557.xz_r' scripts/cpuspec/run-performance-compare.sh`

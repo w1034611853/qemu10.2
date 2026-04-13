@@ -80,7 +80,10 @@ run "$qemu_bin" -L "$guest_sysroot" \
     # The wrapper is only for functional smoke.  It protects 557.xz_r test-size
     # from WSL/specinvoke negative elapsed-time artifacts and must not be used
     # for timing or performance comparisons.
-    run ./bin/runcpu \
+    printf '\n>>> ./bin/runcpu ... %s\n' "$benchmarks"
+    spec_output=$(mktemp "${TMPDIR:-/tmp}/qemu-cpuspec-functional.XXXXXX")
+    set +e
+    ./bin/runcpu \
         --config "$spec_config" \
         --define "qemu=$wrapper" \
         --define "guest_sysroot=$guest_sysroot" \
@@ -88,5 +91,23 @@ run "$qemu_bin" -L "$guest_sysroot" \
         --iterations=1 \
         --action=run \
         --nobuild \
-        $benchmarks
+        $benchmarks 2>&1 | tee "$spec_output"
+    runcpu_rc=${PIPESTATUS[0]}
+    set -e
+
+    if [[ "$runcpu_rc" -ne 0 ]]; then
+        rm -f "$spec_output"
+        exit "$runcpu_rc"
+    fi
+    if grep -Eq '(^|[[:space:]])Error:[[:space:]]+[0-9]+x' "$spec_output"; then
+        echo "SPEC reported benchmark errors; see runcpu log above" >&2
+        rm -f "$spec_output"
+        exit 1
+    fi
+    if ! grep -Eq '(^|[[:space:]])Success:[[:space:]]+[0-9]+x' "$spec_output"; then
+        echo "SPEC did not report a benchmark Success line" >&2
+        rm -f "$spec_output"
+        exit 1
+    fi
+    rm -f "$spec_output"
 )

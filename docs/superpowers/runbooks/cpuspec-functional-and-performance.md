@@ -89,6 +89,8 @@ Success criteria:
 - every focused checker exits `0`
 - `nzcv-status4` prints `PASS`
 - SPEC reports `Success` for each selected benchmark
+- the runner fails if `runcpu` prints a benchmark `Error:` line, even if the
+  native `runcpu` process itself exits `0`
 
 Known fresh validation:
 
@@ -100,6 +102,8 @@ Known fresh validation:
   functional script run passed as `CPU2017.114.*`
 - `CPU2017.114.*` generated all 12 expected `cpu2006docs.tar-*.out` files and
   `speccmds.out` had no `negative elapsed` record
+- after adding the runner-side SPEC output check, the same narrow functional
+  script run passed as `CPU2017.115.*`
 
 ## Performance Comparison
 
