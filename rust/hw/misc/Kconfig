@@ -1,0 +1,3 @@
+config QEMU_AGENT
+    bool
+    default y if TEST_DEVICES
