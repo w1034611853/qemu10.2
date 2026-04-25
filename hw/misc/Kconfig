@@ -1,3 +1,8 @@
+config QEMU_AGENT
+    bool
+    default y if TEST_DEVICES
+    select X_QEMU_AGENT_RUST if HAVE_RUST
+
 config APPLESMC
     bool
     depends on ISA_BUS

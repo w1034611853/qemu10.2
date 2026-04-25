@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "hw/char/pl011",
+    "hw/misc/qemu_agent",
     "hw/timer/hpet",
     "tests",
 ]

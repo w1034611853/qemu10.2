@@ -1,0 +1,2 @@
+config X_QEMU_AGENT_RUST
+    bool
