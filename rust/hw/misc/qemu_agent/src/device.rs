@@ -7,17 +7,19 @@
 //!    and control the emulator (read phys mem, etc.).
 //! 2. A **report interface** where the guest can push structured telemetry
 //!    (CPU usage, memory usage, I/O stats, etc.) into QEMU.  The emulator
-//!    keeps the latest latched values and can react to them in real time.
+//!    latches the latest values and invokes handle_report() synchronously
+//!    under the BQL, allowing the device to change emulation behavior in
+//!    real time.
 
 use std::ffi::CStr;
 
-use bql::prelude::*;
-use common::prelude::*;
-use hwcore::prelude::*;
-use migration::{self, prelude::*};
-use qom::prelude::*;
-use system::prelude::*;
-use util::prelude::*;
+use bql::{BqlCell, BqlRefCell};
+use common::{TryInto, uninit_field_mut};
+use hwcore::{Device, DeviceImpl, ResettablePhasesImpl, ResetType, SysBusDeviceImpl};
+use migration::{impl_vmstate_struct, vmstate_fields, VMStateDescription, VMStateDescriptionBuilder};
+use qom::{Object, ObjectImpl, ObjectType, ParentField, ParentInit, qom_isa};
+use system::{hwaddr, MemoryRegion, MemoryRegionOps, MemoryRegionOpsBuilder, MEMTXATTRS_UNSPECIFIED};
+use util::{log_mask_ln, Log};
 
 use crate::registers::RegisterOffset;
 
@@ -100,11 +102,11 @@ impl_vmstate_struct!(
 
 /// QEMU Agent state structure.
 #[repr(C)]
-#[derive(qom::Object, hwcore::Device)]
+#[derive(Object, Device)]
 pub struct QemuAgentState {
-    pub parent_obj: ParentField<SysBusDevice>,
+    pub parent_obj: ParentField<hwcore::SysBusDevice>,
     pub iomem: MemoryRegion,
-    pub irq: InterruptSource,
+    pub irq: hwcore::InterruptSource,
     pub regs: BqlRefCell<AgentRegisters>,
     /// Shadow staging area for the report being composed by the guest.
     pub report_type: BqlCell<u32>,
@@ -113,15 +115,15 @@ pub struct QemuAgentState {
     pub report_v2: BqlCell<u32>,
 }
 
-qom_isa!(QemuAgentState: SysBusDevice, DeviceState, Object);
+qom_isa!(QemuAgentState: hwcore::SysBusDevice, hwcore::DeviceState, qom::Object);
 
 unsafe impl ObjectType for QemuAgentState {
-    type Class = <SysBusDevice as ObjectType>::Class;
+    type Class = <hwcore::SysBusDevice as ObjectType>::Class;
     const TYPE_NAME: &'static CStr = crate::TYPE_QEMU_AGENT;
 }
 
 impl ObjectImpl for QemuAgentState {
-    type ParentType = SysBusDevice;
+    type ParentType = hwcore::SysBusDevice;
 
     const INSTANCE_INIT: Option<unsafe fn(ParentInit<Self>)> = Some(Self::init);
     const INSTANCE_POST_INIT: Option<fn(&Self)> = Some(Self::post_init);
@@ -363,7 +365,6 @@ impl QemuAgentState {
 
         match typ {
             report_types::CPU_USAGE => {
-                // Example: log the CPU usage.  Replace with real policy.
                 log_mask_ln!(
                     Log::Unimp,
                     "qemu-agent: CPU usage report {v0}%"
@@ -406,13 +407,14 @@ impl QemuAgentState {
             system::bindings::address_space_rw(
                 std::ptr::addr_of_mut!(system::bindings::address_space_memory),
                 pa,
-                system::MEMTXATTRS_UNSPECIFIED,
+                MEMTXATTRS_UNSPECIFIED,
                 buf.as_mut_ptr().cast(),
                 4,
                 false,
             )
         };
         if ret == 0 {
+            // MEMTX_OK is 0
             (u32::from_le_bytes(buf), 0)
         } else {
             (0, 0)
@@ -426,7 +428,7 @@ impl QemuAgentState {
             system::bindings::address_space_rw(
                 std::ptr::addr_of_mut!(system::bindings::address_space_memory),
                 pa,
-                system::MEMTXATTRS_UNSPECIFIED,
+                MEMTXATTRS_UNSPECIFIED,
                 buf.as_mut_ptr().cast(),
                 4,
                 true,
