@@ -19,7 +19,7 @@ use hwcore::{Device, DeviceImpl, ResettablePhasesImpl, ResetType};
 use system::{SysBusDeviceClassExt, SysBusDeviceImpl, SysBusDeviceMethods};
 use migration::{impl_vmstate_struct, vmstate_fields, vmstate_of, VMStateDescription, VMStateDescriptionBuilder};
 use qom::{Object, ObjectImpl, ObjectType, ParentField, ParentInit, qom_isa};
-use system::{hwaddr, MemoryRegion, MemoryRegionOps, MemoryRegionOpsBuilder, SysBusDevice, MEMTXATTRS_UNSPECIFIED};
+use system::{hwaddr, MemoryRegion, MemoryRegionOps, MemoryRegionOpsBuilder, MEMTXATTRS_UNSPECIFIED};
 use util::log_mask_ln;
 use util::log::Log;
 
@@ -106,7 +106,7 @@ impl_vmstate_struct!(
 #[repr(C)]
 #[derive(Object, Device)]
 pub struct QemuAgentState {
-    pub parent_obj: ParentField<SysBusDevice>,
+    pub parent_obj: ParentField<hwcore::SysBusDevice>,
     pub iomem: MemoryRegion,
     pub irq: hwcore::InterruptSource,
     pub regs: BqlRefCell<AgentRegisters>,
@@ -117,15 +117,15 @@ pub struct QemuAgentState {
     pub report_v2: BqlCell<u32>,
 }
 
-qom_isa!(QemuAgentState: SysBusDevice, hwcore::DeviceState, qom::Object);
+qom_isa!(QemuAgentState: hwcore::SysBusDevice, hwcore::DeviceState, qom::Object);
 
 unsafe impl ObjectType for QemuAgentState {
-    type Class = <SysBusDevice as ObjectType>::Class;
+    type Class = <hwcore::SysBusDevice as ObjectType>::Class;
     const TYPE_NAME: &'static CStr = crate::TYPE_QEMU_AGENT;
 }
 
 impl ObjectImpl for QemuAgentState {
-    type ParentType = SysBusDevice;
+    type ParentType = hwcore::SysBusDevice;
 
     const INSTANCE_INIT: Option<unsafe fn(ParentInit<Self>)> = Some(Self::init);
     const INSTANCE_POST_INIT: Option<fn(&Self)> = Some(Self::post_init);
